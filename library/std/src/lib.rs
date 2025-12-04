@@ -390,6 +390,19 @@
 #![feature(stdarch_internal)]
 // tidy-alphabetical-end
 //
+// Library features (fs):
+// tidy-alphabetical-start
+// (already exported)
+// #![feature(assert_matches)]
+#![feature(const_clone)]
+#![feature(const_destruct)]
+#![feature(const_try)]
+#![feature(const_try_residual)]
+#![feature(slice_from_ptr_range)]
+#![feature(try_trait_v2_residual)]
+#![feature(unsafe_pinned)]
+// tidy-alphabetical-end
+//
 // Only for re-exporting:
 // tidy-alphabetical-start
 #![feature(assert_matches)]

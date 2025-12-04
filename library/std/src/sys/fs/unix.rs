@@ -88,6 +88,7 @@ use crate::os::unix::prelude::*;
 #[cfg(target_os = "wasi")]
 use crate::os::wasi::prelude::*;
 use crate::path::{Path, PathBuf};
+use crate::pin::Pin;
 use crate::sync::Arc;
 use crate::sys::common::small_c_string::run_path_with_cstr;
 use crate::sys::fd::FileDesc;
@@ -109,7 +110,7 @@ pub struct File(FileDesc);
 macro_rules! cfg_has_statx {
     ({ $($then_tt:tt)* } else { $($else_tt:tt)* }) => {
         cfg_select! {
-            all(target_os = "linux", target_env = "gnu") => {
+            all(target_os = "linux", any(target_env = "", target_env = "gnu")) => {
                 $($then_tt)*
             }
             _ => {
@@ -118,7 +119,7 @@ macro_rules! cfg_has_statx {
         }
     };
     ($($block_inner:tt)*) => {
-        #[cfg(all(target_os = "linux", target_env = "gnu"))]
+        #[cfg(all(target_os = "linux", any(target_env = "", target_env = "gnu")))]
         {
             $($block_inner)*
         }
@@ -255,20 +256,1326 @@ cfg_has_statx! {{
     }
 }}
 
-// all DirEntry's will have a reference to this struct
-struct InnerReadDir {
-    dirp: Dir,
-    root: PathBuf,
+// FIXME: would be very helpful to define named cfg(...) arguments instead of repeating them
+//        ad nauseam!
+macro_rules! cfg_has_getdents {
+    ( $it:item ) => {
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "hurd",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd",
+        ))]
+        $it
+    };
+    ( $ex:expr ) => {
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "hurd",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd",
+        ))]
+        $ex
+    };
 }
 
-pub struct ReadDir {
-    inner: Arc<InnerReadDir>,
-    end_of_stream: bool,
+macro_rules! cfg_select_has_getdents {
+    ( => { $($then_tt:tt)* } $($else_tt:tt)* ) => {
+        cfg_select! {
+            any(
+                target_os = "linux",
+                target_os = "hurd",
+                target_os = "dragonfly",
+                target_os = "freebsd",
+                target_os = "netbsd",
+                target_os = "openbsd",
+
+            ) => {
+                $($then_tt)*
+            }
+            $($else_tt)*
+        }
+    };
+    ( => $ex:expr ) => {
+        cfg_select! {
+            any(
+                target_os = "linux",
+                target_os = "hurd",
+                target_os = "dragonfly",
+                target_os = "freebsd",
+                target_os = "netbsd",
+                target_os = "openbsd",
+
+            ) => $ex
+        }
+    };
 }
 
-impl ReadDir {
-    fn new(inner: InnerReadDir) -> Self {
-        Self { inner: Arc::new(inner), end_of_stream: false }
+// Implementation using the available `getdents()` method.
+cfg_has_getdents! {
+mod getdents_impl {
+    use super::buffer_state::ChunkedStreamResult;
+    use core::slice::memchr;
+    use crate::os::fd;
+    use crate::{ffi, io, iter, mem, num, ops, ptr, slice};
+
+    // TODO: pull this in from the libc crate itself when it's in:
+    //       https://github.com/rust-lang/libc/pull/4522
+    cfg_select! {
+        all(target_os = "linux", target_env = "musl") => {
+            // FIXME: switch to using posix_getdents() when available! currently not in the musl
+            //        that ships with rust, although musl released this in early 2025.
+            use super::dirent64 as dent_struct;
+
+            unsafe extern "C" {
+                fn getdents64(fd: libc::c_int, buf: *mut libc::c_void, nbytes: usize) -> isize;
+            }
+
+            use getdents64 as getdents_fn;
+        }
+        // i.e. all glibc platforms:
+        all(
+            any(target_os = "linux", target_os = "hurd"),
+            any(target_env = "", target_env = "gnu"),
+        ) => {
+            use super::dirent64 as dent_struct;
+
+            unsafe extern "C" {
+                fn getdents64(fd: libc::c_int, buf: *mut libc::c_void, nbytes: usize) -> isize;
+            }
+
+            use getdents64 as getdents_fn;
+        }
+        target_os = "dragonfly" => {
+            use super::dirent64 as dent_struct;
+
+            unsafe extern "C" {
+                fn getdents(fd: libc::c_int, buf: *mut libc::c_char, nbytes: usize) -> libc::c_int;
+            }
+
+            use getdents as getdents_fn;
+        }
+        target_os = "freebsd" => {
+            use super::dirent64 as dent_struct;
+
+            unsafe extern "C" {
+                fn getdents(fd: libc::c_int, buf: *mut libc::c_char, nbytes: usize) -> isize;
+            }
+
+            use getdents as getdents_fn;
+        }
+        target_os = "netbsd" => {
+            use super::dirent64 as dent_struct;
+
+            unsafe extern "C" {
+                fn getdents(fd: libc::c_int, buf: *mut libc::c_char, nbytes: usize) -> libc::c_int;
+            }
+
+            use getdents as getdents_fn;
+        }
+        target_os = "openbsd" => {
+            use super::dirent64 as dent_struct;
+
+            unsafe extern "C" {
+                fn getdents(fd: libc::c_int, buf: *mut libc::c_void, nbytes: usize) -> libc::c_int;
+            }
+
+            use getdents as getdents_fn;
+        }
+        _ => {
+            compile_error!("getdents is not supported on this platform!");
+        }
+    }
+
+    // See https://pubs.opengroup.org/onlinepubs/9799919799/functions/posix_getdents.html for
+    // semantics.
+    #[inline]
+    unsafe fn do_getdents(
+        fd: fd::RawFd,
+        base: *mut mem::MaybeUninit<u8>,
+        nbytes: usize,
+    ) -> io::Result<Option<num::NonZeroUsize>> {
+        match unsafe { getdents_fn(fd, base.cast(), nbytes) } {
+            // EINVAL occurs when the provided buffer size is not large enough for the next entry.
+            -1 => Err(io::Error::last_os_error()),
+            0 => Ok(None),
+            rc => {
+                debug_assert!(rc > 0);
+                Ok(Some(unsafe { num::NonZeroUsize::new_unchecked(rc as usize) }))
+            }
+        }
+    }
+
+    #[inline]
+    const fn getdents_eager<'buf>(
+        fd: &mut fd::RawFd,
+        buf: &'buf mut [mem::MaybeUninit<u8>],
+    ) -> io::Result<Option<&'buf EagerEntries>> {
+        let n = match unsafe { do_getdents(*fd, buf.as_mut_ptr(), buf.len()) } {
+            Err(e) => return Err(e),
+            Ok(None) => return Ok(None),
+            Ok(Some(n)) => n,
+        };
+        let buf: &[u8] = unsafe { slice::from_raw_parts(buf.as_ptr().cast(), n.get()) };
+        Ok(Some(EagerEntries::new(buf)))
+    }
+
+    #[inline]
+    pub(super) fn getdents_single<'buf, 'fd>(
+        buf: &'buf mut [mem::MaybeUninit<u8>],
+        fd: &'fd mut fd::RawFd,
+    ) -> ChunkedStreamResult<&'buf EagerEntries, io::Error> {
+        match getdents_eager(fd, buf).transpose() {
+            None => ChunkedStreamResult::NoFurtherEntries,
+            Some(Err(e)) => ChunkedStreamResult::InterruptedByErr(e),
+            Some(Ok(entries)) => ChunkedStreamResult::Entries(entries),
+        }
+    }
+
+    #[derive(Debug)]
+    #[repr(transparent)]
+    pub(super) struct EagerEntries([u8]);
+
+    impl EagerEntries {
+        #[inline(always)]
+        const fn new(bytes: &[u8]) -> &Self {
+            unsafe { &*(bytes as *const [u8] as *const Self) }
+        }
+
+        #[inline(always)]
+        const fn new_mut(bytes: &mut [u8]) -> &mut Self {
+            unsafe { &mut *(bytes as *mut [u8] as *mut Self) }
+        }
+
+        #[inline]
+        fn shift_index(&mut self, reclen: usize) {
+            (&self.0)
+                .split_off(..reclen)
+                .expect("record length from getdents was more than remaining length");
+        }
+
+        pub(super) fn get_next<'buf, 's>(&'s mut self) -> Option<&'buf EagerDirent>
+        where
+            's: 'buf,
+        {
+            // The end of the final record will always be the end of the buffer.
+            // This is a result of limiting buffer length to the result of the getdents() call.
+            if self.0.is_empty() {
+                return None;
+            }
+
+            // Index to the beginning of the current entry in the buffer.
+            let cur_dirent_ptr: *const dent_struct = self.0.as_ptr().cast();
+            // Read the length of the current record.
+            let p_reclen = unsafe { ptr::addr_of!((*cur_dirent_ptr).d_reclen) };
+            let d_reclen = unsafe { p_reclen.read() } as usize;
+            // Create an unsized reference to the current record.
+            let ret: &'buf [u8] = unsafe { slice::from_raw_parts(self.0.as_ptr(), d_reclen) };
+            // Prepare for the next iteration by shifting the index to the start of the next record.
+            self.shift_index(d_reclen);
+            // Return an unsized wrapper around the record contained in the specified buffer region.
+            Some(EagerDirent::new(ret))
+        }
+
+        #[inline(always)]
+        pub(super) const fn as_ptr_range(&self) -> ops::Range<*const u8> {
+            self.0.as_ptr_range()
+        }
+
+        #[unstable(feature = "slice_from_ptr_range", issue = "89792")]
+        #[inline(always)]
+        pub(super) const unsafe fn from_ptr_range<'a>(range: ops::Range<*const u8>) -> &'a Self {
+            Self::new(unsafe { slice::from_ptr_range(range) })
+        }
+
+        #[unstable(feature = "slice_from_ptr_range", issue = "89792")]
+        #[inline(always)]
+        pub(super) const unsafe fn from_ptr_range_self_mut<'a>(
+            range: ops::Range<*const u8>,
+        ) -> &'a mut Self {
+            let range: ops::Range<*mut u8> = mem::transmute(range);
+            Self::new_mut(unsafe { slice::from_mut_ptr_range(range) })
+        }
+    }
+
+    #[derive(Debug)]
+    #[repr(transparent)]
+    pub(super) struct EagerDirent([u8]);
+
+    impl EagerDirent {
+        #[inline(always)]
+        const fn new(bytes: &[u8]) -> &Self {
+            unsafe { &*(bytes as *const [u8] as *const Self) }
+        }
+
+        #[inline(always)]
+        const fn new_mut(bytes: &mut [u8]) -> &mut Self {
+            unsafe { &mut *(bytes as *mut [u8] as *mut Self) }
+        }
+
+        #[inline(always)]
+        const fn as_dirent_ptr(&self) -> *const dent_struct {
+            self.0.as_ptr().cast()
+        }
+
+        #[inline]
+        const fn d_ino(&self) -> libc::ino64_t {
+            let cur_dirent_ptr = self.as_dirent_ptr();
+            let p_ino = unsafe { ptr::addr_of!((*cur_dirent_ptr).d_ino) };
+            unsafe { p_ino.read() }
+        }
+
+        #[inline(always)]
+        pub(super) const fn inode(&self) -> libc::ino64_t {
+            self.d_ino()
+        }
+
+        #[inline]
+        const fn d_type(&self) -> libc::c_uchar {
+            let cur_dirent_ptr = self.as_dirent_ptr();
+            let p_type = unsafe { ptr::addr_of!((*cur_dirent_ptr).d_type) };
+            unsafe { p_type.read() }
+        }
+
+        #[inline(always)]
+        pub(super) const fn eager_type(&self) -> super::EagerFileType {
+            super::EagerFileType::from_type(self.d_type())
+        }
+
+        #[inline]
+        #[cfg_attr(debug_assertions, track_caller)]
+        const unsafe fn get_p_name(cur_dirent_ptr: *const dent_struct) -> *const libc::c_char {
+            unsafe { ptr::addr_of!((*cur_dirent_ptr).d_name) }.cast()
+        }
+
+        #[inline]
+        const fn p_name(&self) -> *const libc::c_char {
+            let cur_dirent_ptr = self.as_dirent_ptr();
+            unsafe { Self::get_p_name(cur_dirent_ptr) }
+        }
+
+        /// Ensure we have a non-empty string, which does *not* begin with a null.
+        ///
+        /// This is the behavior we expect from POSIX, but is *not* safety-critical.
+        #[inline]
+        #[track_caller]
+        const fn is_valid_name_region(region: &[u8]) -> bool {
+            // name field cannot be an empty slice
+            !region.is_empty() &&
+                // name field cannot be an empty null-terminated string
+                (unsafe { region.as_ptr().read() } != b'\0')
+        }
+
+        const CUR_DIR_LEN: usize = 2;
+        const CUR_DIR: [u8; Self::CUR_DIR_LEN] = [b'.', b'\0'];
+        const PARENT_DIR_LEN: usize = 3;
+        const PARENT_DIR: [u8; Self::PARENT_DIR_LEN] = [b'.', b'.', b'\0'];
+
+        /// Whether this directory entry points to the `'.'` (current) or `'..'` (parent) directory.
+        ///
+        /// If so, [`fs::read_dir()`](crate::fs::read_dir) must avoid generating it as an entry.
+        /// While this could be done at a higher level, after getting
+        #[inline]
+        pub(super) const fn is_generated_cur_or_parent(&self) -> bool {
+            // Regardless of whether we know the precise entry name length on the current platform,
+            // we can still ensure we never look at uninitialized memory, *without* calling strlen
+            // (i.e. in constant time and space), by limiting to the length of the current record.
+            let region = self.overbroad_name_region();
+            // NB: *not* a safety check, since we also check the 0 and 1 cases below with runtime
+            //     panics.
+            debug_assert!(Self::is_valid_name_region(region));
+            match region.len() {
+                0 => unreachable!("region cannot be empty"),
+                1 => unreachable!("region cannot be single byte"),
+                // Determine if it matches the '.' entry.
+                Self::CUR_DIR_LEN => {
+                    debug_assert_eq!(Self::CUR_DIR_LEN, 2);
+                    debug_assert_eq!(Self::CUR_DIR_LEN, Self::CUR_DIR
+                                     .len());
+                    let name_buf: &[u8; Self::CUR_DIR.len()] = {
+                        let array_chunk: *const [u8; Self::CUR_DIR.len()] = region.as_ptr().cast();
+                        unsafe { &*array_chunk }
+                    };
+                    matches!(name_buf, &Self::CUR_DIR)
+                },
+                // Determine if it matches the '..' entry.
+                Self::PARENT_DIR_LEN => {
+                    debug_assert_eq!(Self::PARENT_DIR_LEN, 3);
+                    debug_assert_eq!(Self::PARENT_DIR_LEN, Self::PARENT_DIR.len());
+                    let name_buf: &[u8; Self::PARENT_DIR.len()] = {
+                        let array_chunk: *const [u8; Self::PARENT_DIR.len()] = region.as_ptr().cast();
+                        unsafe { &*array_chunk }
+                    };
+                    matches!(name_buf, &Self::PARENT_DIR)
+                },
+                // TODO: add logging for any of these cases?
+                n => {
+                    debug_assert!(n > 3);
+                    false
+                },
+            }
+        }
+
+        /// This is the value originally extracted from [`dent_struct::d_reclen`].
+        #[inline(always)]
+        const fn d_reclen(&self) -> usize { self.0.len() }
+
+        // FIXME: some platforms provide the exact name length in the dirent struct (in particular
+        //        hurd and most BSDs). If provided, both the generation of the .name() CStr as well
+        //        as the .is_generated_cur_or_parent() method can avoid this "max" process entirely,
+        //        and can instead generate .name() with CStr::from_bytes_with_nul_unchecked()!
+        //
+        //        It would be ideal to implement this with a platform-specific trait method,
+        //        although that would also lose the ability to implement as a `const fn`, since
+        //        trait methods cannot be const. However, since this is always interpreting the
+        //        result of an OS syscall (the runtime state of the vfs abstraction), losing
+        //        constness is no loss (and constness may in fact be wrong to use here at all).
+        #[inline]
+        const fn overbroad_name_region<'buf, 's>(&'s self) -> &'buf [u8]
+        where
+            's: 'buf,
+        {
+            let cur_dirent_ptr = self.as_dirent_ptr();
+
+            // NB: The `name` field is always at the end of the directory entry, by design:
+            // (a) this is true for `posix_getdents()` (not yet supported)
+            // (b) this is true for all of the `getdents_fn()` impls supported above.
+            //
+            // As historical context, the initial linux "getdents" syscall (after 2.6.4) inserted
+            // `d_type` at the end of the record. This behavior is not exposed by any of the libc
+            // externs we call into above--getdents64
+            //
+            // `getdents_fn()` aligns records within the given buffer to `dent_struct`,
+            // so there may be any amount of trailing garbage (it may or may not be nulls).
+            // However, it *is* required that the `name` field have a null-termination byte.
+            // As a result, we can limit the range of bytes that we have to scan for nulls (and
+            // avoid the potential to ever read out of bounds (!!!)) by only scanning within the
+            // allocated record field.
+            let p_name = unsafe { Self::get_p_name(cur_dirent_ptr) };
+            debug_assert!(unsafe { p_name.byte_offset_from(cur_dirent_ptr) } > 0);
+            let name_offset = unsafe { p_name.byte_offset_from_unsigned(cur_dirent_ptr) };
+            debug_assert!(name_offset <= self.d_reclen());
+            let ret: usize = unsafe { self.d_reclen().unchecked_sub(name_offset) };
+
+            // We also know:
+            // (a) the `name` field will never be zero-sized,
+            // (b) the `name` pointer will never be null.
+            // This is because POSIX equates directory entry names with null-terminated strings, and
+            // disallows empty (i.e. null) name strings.
+            // As a result, we can also infer that the name itself
+            // (and therefore the upper bound we calculate in this method)
+            // will be strictly > 0.
+            debug_assert!(name_offset < self.d_reclen());
+            let max_namelen = unsafe { num::NonZeroUsize::new_unchecked(ret) };
+
+            // Now we can calculate the region containing the name string:
+            unsafe { slice::from_raw_parts(p_name.cast(), max_namelen.get()) }
+        }
+
+        // Narrow the name string to the exact region it covers by searching for the first null.
+        #[inline]
+        const fn name_buf<'buf, 's>(&'s self) -> &'buf [u8]
+        where
+            's: 'buf,
+        {
+            let region = self.overbroad_name_region();
+            // NB: This is *not* a safety check, as this will be covered by the memchr call below.
+            debug_assert!(Self::is_valid_name_region(region));
+            let Some(nul_pos) = memchr::memchr(b'\0', region) else {
+                let len = region.len();
+                // NB: we do *not* relegate this to debug builds only--in case the OS gives us
+                //     garbage, we must panic here.
+                unreachable!("should always be a null byte in name (len {len}): {region:.10?}")
+            };
+            unsafe { slice::from_raw_parts(region.as_ptr(), nul_pos + 1) }
+        }
+
+        /// Calculate the runtime length of the null-terminated string located
+        #[inline(always)]
+        pub(super) const fn name<'buf, 's>(&'s self) -> &'buf ffi::CStr
+        where
+            's: 'buf,
+        {
+            let buf = self.name_buf();
+            // We should be given a buffer with exactly one null byte at the end.
+            debug_assert!(!buf.is_empty());
+            debug_assert_eq!(buf[buf.len() - 1], b'\0');
+            debug_assert!(memchr::memchr(b'\0', buf).is_none());
+            unsafe { ffi::CStr::from_bytes_with_nul_unchecked(buf) }
+        }
+
+        #[inline(always)]
+        pub(super) const fn as_ptr_range(&self) -> ops::Range<*const u8> {
+            self.0.as_ptr_range()
+        }
+
+        #[unstable(feature = "slice_from_ptr_range", issue = "89792")]
+        #[inline(always)]
+        pub(super) const unsafe fn from_ptr_range<'a>(range: ops::Range<*const u8>) -> &'a Self {
+            Self::new(unsafe { slice::from_ptr_range(range) })
+        }
+
+        #[unstable(feature = "slice_from_ptr_range", issue = "89792")]
+        #[inline(always)]
+        pub(super) const unsafe fn from_ptr_range_self_mut<'a>(
+            range: ops::Range<*const u8>,
+        ) -> &'a mut Self {
+            let range: ops::Range<*mut u8> = mem::transmute(range);
+            Self::new_mut(unsafe { slice::from_mut_ptr_range(range) })
+        }
+    }
+}}
+
+#[cfg(not(any(
+    // No type:
+    target_os = "solaris",
+    target_os = "illumos",
+    target_os = "aix",
+    target_os = "nto",
+    target_os = "haiku",
+    target_os = "vxworks",
+    // Neither ino nor type:
+    target_os = "vita",
+    target_os = "nuttx",
+)))]
+#[repr(u8)]
+#[non_exhaustive]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+enum EagerFileType {
+    Unknown = libc::DT_UNKNOWN,
+    Fifo = libc::DT_FIFO,
+    Symlink = libc::DT_LNK,
+    File = libc::DT_REG,
+    Socket = libc::DT_SOCK,
+    Directory = libc::DT_DIR,
+    Block = libc::DT_BLK,
+    Character = libc::DT_CHR,
+    Other(libc::c_uchar),
+}
+
+#[cfg(not(any(
+    // No type:
+    target_os = "solaris",
+    target_os = "illumos",
+    target_os = "aix",
+    target_os = "nto",
+    target_os = "haiku",
+    target_os = "vxworks",
+    // Neither ino nor type:
+    target_os = "vita",
+    target_os = "nuttx",
+)))]
+impl EagerFileType {
+    #[inline(always)]
+    const fn from_type(d_type: libc::c_uchar) -> Self {
+        match d_type {
+            libc::DT_FIFO => Self::Fifo,
+            libc::DT_LNK => Self::Symlink,
+            libc::DT_REG => Self::File,
+            libc::DT_SOCK => Self::Socket,
+            libc::DT_DIR => Self::Directory,
+            libc::DT_BLK => Self::Block,
+            libc::DT_CHR => Self::Character,
+            libc::DT_UNKNOWN => Self::Unknown,
+            _ => Self::Other(d_type),
+        }
+    }
+
+    #[inline(always)]
+    const fn as_file_type(self) -> Option<FileType> {
+        match self {
+            Self::Fifo => Some(FileType { mode: libc::S_IFIFO }),
+            Self::Symlink => Some(FileType { mode: libc::S_IFLNK }),
+            Self::File => Some(FileType { mode: libc::S_IFREG }),
+            Self::Socket => Some(FileType { mode: libc::S_IFSOCK }),
+            Self::Directory => Some(FileType { mode: libc::S_IFDIR }),
+            Self::Block => Some(FileType { mode: libc::S_IFBLK }),
+            Self::Character => Some(FileType { mode: libc::S_IFCHR }),
+            Self::Unknown => None,
+            _ => None,
+        }
+    }
+}
+
+#[unstable(feature = "mapped_lock_guards", issue = "117108")]
+mod dir_fd {
+    use crate::marker::{PhantomData, PhantomPinned};
+    use crate::os::fd;
+    use crate::os::unix::io::IntoRawFd;
+    use crate::path::{Path, PathBuf};
+    use crate::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard, MappedRwLockReadGuard, MappedRwLockWriteGuard};
+    use crate::{io, mem, ops};
+
+    // NB: the getdents syscall internally performs a mutating operation upon
+    //     the resource represented by the `libc::DIR *` pointer.
+    #[derive(Debug)]
+    #[repr(transparent)]
+    struct DirFd {
+        fd: fd::RawFd,
+    }
+
+    impl DirFd {
+        #[inline(always)]
+        fn from_dir(dir: super::Dir) -> Self {
+            let fd = unsafe { libc::dirfd(dir.0) };
+            Self::from_fd(fd)
+        }
+
+        #[inline(always)]
+        fn from_fd(fd: fd::RawFd) -> Self {
+            super::debug_assert_fd_is_open(fd);
+            Self { fd }
+        }
+
+        #[inline(always)]
+        const fn as_fd(&self) -> &fd::RawFd {
+            &self.fd
+        }
+
+        #[inline(always)]
+        const fn as_mut_fd(&mut self) -> &mut fd::RawFd {
+            &mut self.fd
+        }
+    }
+
+    impl ops::Drop for DirFd {
+        fn drop(&mut self) {
+            super::debug_assert_fd_is_open(self.fd);
+            let res = unsafe { libc::close(self.fd) };
+            assert!(
+                res == 0 || io::Error::last_os_error().is_interrupted(),
+                "unexpected error during close() on directory fd: {:?}",
+                io::Error::last_os_error()
+            );
+        }
+    }
+
+    #[derive(Debug)]
+    pub(super) struct DirWithPath {
+        dir: RwLock<DirFd>,
+        path: PathBuf,
+    }
+
+    pub(super) trait FileDescriptorHandle {
+        type FdRead<'h>: ops::Deref<Target = fd::RawFd> where Self: 'h;
+        type FdWrite<'h>: ops::DerefMut<Target = fd::RawFd> where Self: 'h;
+
+        fn as_fd<'h>(&'h self) -> Self::FdRead<'h>;
+        fn as_mut_fd<'h>(&'h self) -> Self::FdWrite<'h>;
+    }
+
+    impl FileDescriptorHandle for DirWithPath {
+        type FdRead<'h> = MappedRwLockReadGuard<'h, fd::RawFd> where Self: 'h;
+        type FdWrite<'h> = MappedRwLockWriteGuard<'h, fd::RawFd> where Self: 'h;
+
+        #[inline]
+        fn as_fd<'h>(&'h self) -> Self::FdRead<'h> {
+            RwLockReadGuard::map(self.dir.read().unwrap(), |dir| dir.as_fd())
+        }
+        #[inline]
+        fn as_mut_fd<'h>(&'h self) -> Self::FdWrite<'h> {
+            RwLockWriteGuard::map(self.dir.write().unwrap(), |dir| dir.as_mut_fd())
+        }
+    }
+
+    #[rustc_const_unstable(feature = "const_convert", issue = "143773")]
+    impl const AsRef<Path> for DirWithPath {
+        #[inline(always)]
+        fn as_ref(&self) -> &Path {
+            self.path.as_path()
+        }
+    }
+
+    impl DirWithPath {
+        pub(super) fn from_dir_and_path(dir: super::Dir, path: impl Into<PathBuf>) -> Self {
+            let dir = RwLock::new(DirFd::from_dir(dir));
+            let path = path.into();
+            Self { dir, path }
+        }
+
+        pub(super) fn from_owned_dir_fd_and_path(
+            dir_fd: fd::OwnedFd,
+            path: impl Into<PathBuf>,
+        ) -> Self {
+            let dir = RwLock::new(DirFd::from_fd(dir_fd.into_raw_fd()));
+            let path = path.into();
+            Self { dir, path }
+        }
+    }
+}
+
+mod buffer_state {
+    use super::getdents_impl;
+    use core::marker::Destruct;
+    use crate::convert::Infallible;
+    use crate::os::fd;
+    use crate::rc::Rc;
+    use crate::sync::Arc;
+    use crate::{io, mem, ops};
+
+    pub(super) trait CloneMutRef: ops::Deref<Target = Self::R> + Clone {
+        type R;
+        fn make_unique_mut(&mut self) -> &mut Self::R;
+        fn make_unique_self(self) -> Self::R;
+        fn wrap(r: Self::R) -> Self;
+    }
+
+    #[repr(transparent)]
+    #[derive(Debug)]
+    pub(super) struct IterState<Buf>(Buf);
+
+    impl<Buf> IterState<Buf> {
+        #[inline(always)]
+        pub(super) const fn with_buf(buf: Buf) -> Self {
+            Self(buf)
+        }
+
+        #[inline(always)]
+        pub(super) const fn into_inner(self) -> Buf {
+            let Self(buf) = self;
+            buf
+        }
+    }
+
+    #[rustc_const_unstable(feature = "const_clone", issue = "142757")]
+    /* #[rustc_const_unstable(feature = "const_destruct", issue = "133214")] */
+    impl<Buf> const Clone for IterState<Buf>
+    where
+        Buf: [const] Clone + [const] Destruct,
+    {
+        #[inline(always)]
+        fn clone(&self) -> Self {
+            Self::with_buf(self.0.clone())
+        }
+
+        #[inline(always)]
+        fn clone_from(&mut self, source: &Self) {
+            self.0.clone_from(&source.0);
+        }
+    }
+
+    #[rustc_const_unstable(feature = "const_convert", issue = "143773")]
+    impl<Buf> const ops::Deref for IterState<Buf>
+    where
+        Buf: [const] ops::Deref,
+    {
+        type Target = Buf::Target;
+
+        #[inline(always)]
+        fn deref(&self) -> &Self::Target {
+            self.0.deref()
+        }
+    }
+
+    #[rustc_const_unstable(feature = "const_convert", issue = "143773")]
+    impl<Buf, T> const AsRef<[T]> for IterState<Buf>
+    where
+        Buf: [const] AsRef<[T]>,
+    {
+        #[inline(always)]
+        fn as_ref(&self) -> &[T] {
+            self.0.as_ref()
+        }
+    }
+
+    #[rustc_const_unstable(feature = "const_convert", issue = "143773")]
+    impl<Buf> const ops::DerefMut for IterState<Buf>
+    where
+        Buf: [const] ops::DerefMut,
+    {
+        #[inline(always)]
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            self.0.deref_mut()
+        }
+    }
+
+    #[rustc_const_unstable(feature = "const_convert", issue = "143773")]
+    impl<Buf, T> const AsMut<[T]> for IterState<Buf>
+    where
+        Buf: [const] AsMut<[T]>,
+    {
+        #[inline(always)]
+        fn as_mut(&mut self) -> &mut [T] {
+            self.0.as_mut()
+        }
+    }
+
+    impl<Data> CloneMutRef for Rc<Data>
+    where
+        Data: Clone,
+    {
+        type R = Data;
+
+        #[inline]
+        fn make_unique_mut(&mut self) -> &mut Self::R {
+            Rc::make_mut(&mut self)
+        }
+
+        #[inline]
+        fn make_unique_self(self) -> Self::R {
+            Rc::unwrap_or_clone(self)
+        }
+
+        #[inline]
+        fn wrap(r: Self::R) -> Self {
+            Rc::new(r)
+        }
+    }
+
+    impl<Data> CloneMutRef for Arc<Data>
+    where
+        Data: Clone,
+    {
+        type R = Data;
+
+        #[inline]
+        fn make_unique_mut(&mut self) -> &mut Self::R {
+            Arc::make_mut(&mut self)
+        }
+
+        #[inline]
+        fn make_unique_self(self) -> Self::R {
+            Arc::unwrap_or_clone(self)
+        }
+
+        #[inline]
+        fn wrap(r: Self::R) -> Self {
+            Arc::new(r)
+        }
+    }
+
+    #[derive(Debug)]
+    pub(super) enum ChunkedStreamResult<T, E> {
+        // This is expected to return a non-empty collection of values.
+        Entries(T),
+        // When all values have been exhausted, iteration ends without error.
+        NoFurtherEntries,
+        // If an error is produced, no new entries are readable, and the stream is generally
+        // expected to be in an indeterminate state.
+        InterruptedByErr(E),
+    }
+
+    #[unstable(feature = "try_trait_v2", issue = "84277")]
+    #[rustc_const_unstable(feature = "const_try", issue = "74935")]
+    impl<T, E> const ops::FromResidual<Result<Option<T>, E>> for ChunkedStreamResult<T, E> {
+        #[inline]
+        #[track_caller]
+        fn from_residual(residual: Result<Option<T>, E>) -> Self {
+            match residual {
+                Ok(Some(t)) => Self::Entries(t),
+                Ok(None) => Self::NoFurtherEntries,
+                Err(e) => Self::InterruptedByErr(e),
+            }
+        }
+    }
+
+    #[unstable(feature = "try_trait_v2", issue = "84277")]
+    #[rustc_const_unstable(feature = "const_try", issue = "74935")]
+    impl<T> const ops::FromResidual<Option<T>> for ChunkedStreamResult<T, Infallible> {
+        #[inline]
+        #[track_caller]
+        fn from_residual(residual: Option<T>) -> Self {
+            match residual {
+                Some(t) => Self::Entries(t),
+                None => Self::NoFurtherEntries,
+            }
+        }
+    }
+
+    #[unstable(feature = "try_trait_v2", issue = "84277")]
+    #[rustc_const_unstable(feature = "const_try", issue = "74935")]
+    impl<T, E, F> const ops::FromResidual<ChunkedStreamResult<Infallible, E>>
+        for ChunkedStreamResult<T, F>
+        where F: [const] From<E>,
+    {
+        #[inline]
+        #[track_caller]
+        fn from_residual(residual: ChunkedStreamResult<Infallible, E>) -> Self {
+            match residual {
+                ChunkedStreamResult::NoFurtherEntries => Self::NoFurtherEntries,
+                ChunkedStreamResult::InterruptedByErr(e) => Self::InterruptedByErr(From::from(e)),
+            }
+        }
+    }
+
+    #[unstable(feature = "try_trait_v2_residual", issue = "91285")]
+    #[rustc_const_unstable(feature = "const_try_residual", issue = "91285")]
+    impl<T, E> const ops::Residual<T> for ChunkedStreamResult<Infallible, E> {
+        type TryType = ChunkedStreamResult<T, E>;
+    }
+
+    #[unstable(feature = "try_trait_v2", issue = "84277")]
+    #[rustc_const_unstable(feature = "const_try", issue = "74935")]
+    impl<T, E> const ops::Try for ChunkedStreamResult<T, E> {
+        type Output = T;
+        type Residual = ChunkedStreamResult<Infallible, E>;
+
+        #[inline]
+        fn from_output(output: Self::Output) -> Self {
+            Self::Entries(output)
+        }
+
+        #[inline]
+        fn branch(self) -> ops::ControlFlow<Self::Residual, Self::Output> {
+            match self {
+                Self::Entries(v) => ops::ControlFlow::Continue(v),
+                Self::NoFurtherEntries => ops::ControlFlow::Break(ChunkedStreamResult::NoFurtherEntries),
+                Self::InterruptedByErr(e) => ops::ControlFlow::Break(ChunkedStreamResult::InterruptedByErr(e)),
+            }
+        }
+    }
+}
+
+cfg_has_getdents! {
+#[unstable(feature = "assert_matches", issue = "82775")]
+mod getdents_iter {
+    use super::buffer_state::{ChunkedStreamResult, CloneMutRef, IterState};
+    use super::getdents_impl::{self, EagerDirent, EagerEntries};
+    use super::{dir_fd, run_path_with_cstr};
+    use core::assert_matches::debug_assert_matches;
+    use crate::borrow::Cow;
+    use crate::marker::{Destruct, PhantomData, PhantomPinned};
+    use crate::os::fd;
+    use crate::path::{Path, PathBuf};
+    use crate::pin::{self, Pin};
+    use crate::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
+    use crate::{cell, fmt, io, mem, ops, ptr};
+
+    #[derive(Debug)]
+    pub(super) struct Entry<DirMutRef, MutRef> {
+        state: IterState<MutRef>,
+        eager_dirent: ops::Range<*const u8>,
+        pub(super) parent: DirMutRef,
+    }
+
+    impl<DirMutRef, MutRef> Entry<DirMutRef, MutRef> {
+        #[inline(always)]
+        pub(super) const fn as_dirent(&self) -> &EagerDirent {
+            unsafe { EagerDirent::from_ptr_range(self.eager_dirent.clone()) }
+        }
+
+        #[inline(always)]
+        pub(super) const fn as_dirent_mut(&mut self) -> &mut EagerDirent {
+            unsafe { EagerDirent::from_ptr_range_self_mut(self.eager_dirent.clone()) }
+        }
+    }
+
+    impl<DirMutRef, MutRef> Clone for Entry<DirMutRef, MutRef>
+    where
+        DirMutRef: Clone + Destruct,
+        MutRef: Clone + Destruct,
+    {
+        #[inline]
+        fn clone(&self) -> Self {
+            Self {
+                state: self.state.clone(),
+                eager_dirent: self.eager_dirent.clone(),
+                parent: self.parent.clone(),
+            }
+        }
+
+        #[inline]
+        fn clone_from(&mut self, source: &Self) {
+            self.state.clone_from(&source.state);
+            self.eager_dirent.clone_from(&source.eager_dirent);
+            self.parent.clone_from(&source.parent);
+        }
+    }
+
+    impl<DirMutRef, Buf, MutRef> Entry<DirMutRef, Pin<MutRef>>
+    where
+        MutRef: CloneMutRef<R = Buf>,
+        Buf: AsMut<[mem::MaybeUninit<u8>]>,
+    {
+        #[unstable(feature = "try_trait_v2", issue = "84277")]
+        fn next_entry<'buf, 's>(
+            entries: &'s mut IterEntries<Pin<MutRef>>,
+            parent: DirMutRef,
+        ) -> impl ops::Try<Output = Self>
+        where
+            Buf: 'buf,
+            's: 'buf,
+        {
+            let eager_dirent: ops::Range<*const u8> =
+                entries.as_entries_mut().get_next()?.as_ptr_range();
+            let state = entries.state.clone();
+            Some(Self { state, eager_dirent, parent })
+        }
+    }
+
+    #[derive(Debug)]
+    struct IterEntries<MutRef> {
+        state: IterState<MutRef>,
+        entries: ops::Range<*const u8>,
+    }
+
+    impl<MutRef> IterEntries<Pin<MutRef>> {
+        #[inline(always)]
+        const fn as_entries(&self) -> &EagerEntries {
+            unsafe { EagerEntries::from_ptr_range(self.entries.clone()) }
+        }
+
+        #[inline(always)]
+        const fn as_entries_mut(&mut self) -> &mut EagerEntries {
+            unsafe { EagerEntries::from_ptr_range_self_mut(self.entries.clone()) }
+        }
+
+        #[inline(always)]
+        const fn retrieve_state(self) -> MutRef where MutRef: ops::Deref {
+            let inner = self.state.into_inner();
+            unsafe { Pin::into_inner_unchecked(inner) }
+        }
+    }
+
+    #[unstable(feature = "unsafe_pinned", issue = "125735")]
+    impl<Buf, MutRef> IterEntries<Pin<MutRef>>
+    where
+        MutRef: CloneMutRef<R = Buf>,
+        Buf: AsMut<[mem::MaybeUninit<u8>]> + Clone,
+    {
+        #[unstable(feature = "try_trait_v2", issue = "84277")]
+        fn next_getdents_entries<'fd>(
+            buf: MutRef,
+            fd: &'fd mut fd::RawFd,
+        ) -> ChunkedStreamResult<Self, io::Error> {
+            let mut buf = pin::UnsafePinned::new(buf);
+            let mut buf_pin = unsafe { Pin::new_unchecked(&mut buf) };
+            let entries: ops::Range<*const u8> = unsafe {
+                // Ensure we have unique ownership of the now-pinned allocation.
+                let buf = unsafe { &mut *(buf_pin.as_mut().get_mut_pinned()) }.make_unique_mut();
+                // Now we can point to it freely.
+                getdents_impl::getdents_single(buf.as_mut(), fd)?.as_ptr_range()
+            };
+            let buf = unsafe { Pin::new_unchecked(buf.into_inner()) };
+            let state = IterState::with_buf(buf);
+            ChunkedStreamResult::Entries(Self { state, entries })
+        }
+    }
+
+    enum IterStateMachine<MutRef> {
+        Ready(mem::ManuallyDrop<MutRef>),
+        InProgress(mem::ManuallyDrop<IterEntries<Pin<MutRef>>>),
+        Done,
+    }
+
+    impl<MutRef> fmt::Debug for IterStateMachine<MutRef> {
+        #[inline]
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match self {
+                Self::Ready(_) => write!(f, "Ready(...)"),
+                Self::InProgress(_) => write!(f, "InProgress(...)"),
+                Self::Done => write!(f, "Done"),
+            }
+        }
+    }
+
+    pub(super) struct Iter<DirMutRef, MutRef> {
+        // NB: As with the readdir() implementation, we need a reference to the initial path string
+        //     provided to readdir() without introducing a lifetime parameter.
+        //     However, as we also now respect the mutability and distinct lifetimes of Dir
+        //     instances, the Arc acknowledges that the iterator exists separately from the
+        //     directory itself.
+        dir: DirMutRef,
+        // NB: In order to support DirEntry instances living past the lifetime of the getdents chunk
+        //     they reference, we call Arc::make_mut() for each new getdents call. This lazily
+        //     clones the buffer so that if all DirEntry instances are dropped, no further
+        //     allocation occurs, but if all DirEntry instances are retained and *not* dropped, we
+        //     perform far fewer allocations by sharing the backing mallocation across
+        //     DirEntry instances.
+        state_machine: IterStateMachine<MutRef>,
+    }
+
+    impl<DirMutRef, MutRef> Iter<DirMutRef, MutRef>
+    {
+        pub(super) const fn from_dir_with_path_and_buf(
+            dir: DirMutRef,
+            buf: MutRef,
+        ) -> Self {
+            Self { dir, state_machine: IterStateMachine::Ready(mem::ManuallyDrop::new(buf)) }
+        }
+    }
+
+    #[rustc_const_unstable(feature = "const_convert", issue = "143773")]
+    impl<Dir, DirMutRef, MutRef> const AsRef<Path> for Iter<DirMutRef, MutRef>
+    where Dir: [const] AsRef<Path>, DirMutRef: [const] ops::Deref<Target=Dir> {
+        #[inline(always)]
+        fn as_ref(&self) -> &Path { self.dir.as_ref() }
+    }
+
+    impl<Dir, DirMutRef, MutRef> fmt::Debug for Iter<DirMutRef, MutRef>
+    where Dir: AsRef<Path>, DirMutRef: ops::Deref<Target=Dir> {
+        #[inline]
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            let p: &Path = self.as_ref();
+            fmt::Debug::fmt(p, f)
+        }
+    }
+
+    impl<Dir, DirMutRef, MutRef> dir_fd::FileDescriptorHandle for Iter<DirMutRef, MutRef>
+    where for<'h> Dir: dir_fd::FileDescriptorHandle + 'h,
+          DirMutRef: ops::Deref<Target=Dir> {
+        type FdRead<'h> = <Dir as dir_fd::FileDescriptorHandle>::FdRead<'h> where Self: 'h;
+        type FdWrite<'h> = <Dir as dir_fd::FileDescriptorHandle>::FdWrite<'h> where Self: 'h;
+
+        #[inline(always)]
+        fn as_fd<'h>(&'h self) -> Self::FdRead<'h> {
+            self.dir.as_fd()
+        }
+        #[inline(always)]
+        fn as_mut_fd<'h>(&'h self) -> Self::FdWrite<'h> {
+            self.dir.as_mut_fd()
+        }
+    }
+
+    impl<Dir, DirMutRef, Buf, MutRef> Iterator for Iter<DirMutRef, MutRef>
+    where
+        for<'h> Dir: dir_fd::FileDescriptorHandle + 'h,
+        DirMutRef: ops::Deref<Target = Dir> + Clone,
+        Buf: AsMut<[mem::MaybeUninit<u8>]> + Clone,
+        MutRef: CloneMutRef<R = Buf>,
+    {
+        type Item = io::Result<Entry<DirMutRef, Pin<MutRef>>>;
+
+        /* #[unstable(feature = "try_trait_v2", issue = "84277")] */
+        fn next(&mut self) -> Option<Self::Item> {
+            use core::ops::Try;
+
+            let res = 'done_or_err: loop {
+                match &mut self.state_machine {
+                    IterStateMachine::Done => break 'done_or_err None,
+                    IterStateMachine::Ready(buf) => match IterEntries::next_getdents_entries(
+                        unsafe { mem::ManuallyDrop::take(buf) },
+                        &mut self.dir.as_mut_fd(),
+                    )
+                    .branch()
+                    {
+                        ops::ControlFlow::Break(e) => match e {
+                            // FIXME: add a log message for no entries?
+                            ChunkedStreamResult::NoFurtherEntries => break 'done_or_err None,
+                            ChunkedStreamResult::InterruptedByErr(e) => break 'done_or_err Some(e),
+                        },
+                        ops::ControlFlow::Continue(entries) => {
+                            self.state_machine = IterStateMachine::InProgress(
+                                mem::ManuallyDrop::new(entries),
+                            );
+                        }
+                    }, // InProgress => fall through!
+                }
+                // If we're here, we are "in progress"!
+                debug_assert_matches!(&self.state_machine, IterStateMachine::InProgress(_));
+
+                // This too is a loop so that it can filter out "." and ".." entries.
+                'entry_result: loop {
+                    match &mut self.state_machine {
+                        IterStateMachine::InProgress(entries) => {
+                            // We need to do unsafe things to clone all the handles needed for an
+                            // entry, because we share mutable state in the getdents buffer across
+                            // multiple objects in complex ways.
+                            let entries = cell::UnsafeCell::from_mut(entries);
+                            let p_entries: *const IterEntries<Pin<MutRef>> = entries.get().cast();
+                            // We got one!!!!!
+                            if let Some(entry) = entries.get_mut().as_entries_mut().get_next()
+                            {
+                                // Ensure . and .. are filtered out:
+                                if entry.is_generated_cur_or_parent() {
+                                    continue 'entry_result;
+                                }
+                                // Otherwise, clone all the handles to satisfy fs::DirEntry's
+                                // requirements!
+                                let eager_dirent = entry.as_ptr_range();
+                                let parent = self.dir.clone();
+                                let state = unsafe { &*p_entries }.state.clone();
+
+                                return Some(Ok(Entry { state, eager_dirent, parent }));
+                            } else {
+                                // Out of entries!!! Time to reload!!!
+                                let buf = unsafe { mem::ManuallyDrop::take(entries.get_mut()) }
+                                    .retrieve_state();
+                                self.state_machine =
+                                    IterStateMachine::Ready(mem::ManuallyDrop::new(buf));
+                                continue 'done_or_err;
+                            }
+                        }
+                    }
+                }
+
+                unreachable!(
+                    "should never get here! in-progress state should return early or continue!"
+                )
+            };
+
+            match res {
+                // We have an i/o error! Maybe there's still more entries!
+                Some(e) => Some(Err(e)),
+                None => {
+                    // We have no more in the current buffer, and no more buffers to receive.
+                    self.state_machine = IterStateMachine::Done;
+                    None
+                }
+            }
+        }
+    }
+
+    impl<Dir, DirMutRef, Buf, MutRef> crate::iter::FusedIterator for Iter<DirMutRef, MutRef>
+    where
+        for<'h> Dir: dir_fd::FileDescriptorHandle + 'h,
+        DirMutRef: ops::Deref<Target = Dir> + Clone,
+        Buf: AsMut<[mem::MaybeUninit<u8>]> + Clone,
+        MutRef: CloneMutRef<R = Buf>,
+    {
+    }
+}}
+
+cfg_select_has_getdents! {
+    => {
+        #[repr(transparent)]
+        struct ReadDirWithBuf<DirMutRef, MutRef> {
+            iter: getdents_iter::Iter<DirMutRef, MutRef>,
+        }
+
+        impl<DirMutRef, MutRef> ReadDirWithBuf<DirMutRef, MutRef> {
+            #[inline(always)]
+            const fn with_buf(dir: DirMutRef, buf: MutRef) -> Self {
+                let iter = getdents_iter::Iter::from_dir_with_path_and_buf(dir, buf);
+                Self { iter }
+            }
+        }
+
+        impl<Dir, DirMutRef, MutRef> fmt::Debug for ReadDirWithBuf<DirMutRef, MutRef>
+        where Dir: AsRef<Path>, DirMutRef: core::ops::Deref<Target=Dir> {
+            #[inline(always)]
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                // This will only be called from std::fs::ReadDir, which will add a "ReadDir()" frame.
+                // Thus the result will be e g 'ReadDir("/home")'
+                fmt::Debug::fmt(&self.iter, f)
+            }
+        }
+
+        #[rustc_const_unstable(feature = "const_convert", issue = "143773")]
+        impl<DirMutRef, MutRef> const AsRef<getdents_iter::Iter<DirMutRef, MutRef>>
+            for ReadDirWithBuf<DirMutRef, MutRef>
+        {
+            #[inline(always)]
+            fn as_ref(&self) -> &getdents_iter::Iter<DirMutRef, MutRef> { &self.iter }
+        }
+
+        #[rustc_const_unstable(feature = "const_convert", issue = "143773")]
+        impl<DirMutRef, MutRef> const AsMut<getdents_iter::Iter<DirMutRef, MutRef>>
+            for ReadDirWithBuf<DirMutRef, MutRef>
+        {
+            #[inline(always)]
+            fn as_mut(&mut self) -> &mut getdents_iter::Iter<DirMutRef, MutRef> { &mut self.iter }
+        }
+
+        /// Chosen arbitrarily.
+        ///
+        /// Rust users with performance- or allocation-sensitive use cases would require expanding
+        /// the stdlib API, so it's not worth spending too much time optimizing this default
+        /// right now.
+        pub(crate) const GETDENTS_BUF_DEFAULT_SIZE: usize = 8192;
+        /// This can be allocated arbitrarily, but the size is known at compile time.
+        ///
+        /// This is a good default for a generic stdlib impl, but users who care about performance
+        /// *will* need a way to provide their own buffer.
+        pub(crate) type ReadDirBuffer = [mem::MaybeUninit<u8>; GETDENTS_BUF_DEFAULT_SIZE];
+        /// How to allocate memory regions for the OS to write into with `getdents()`.
+        ///
+        /// *NB: This must implement [`buffer_state::CloneMutRef`].*
+        ///
+        /// Users interested in performance *will* require the ability to employ e.g. memory pooling
+        /// and other techniques.
+        pub(crate) type ReadDirRef<T> = Arc<T>;
+        /// How to allocate memory regions for path strings.
+        ///
+        /// *NB: This must implement [`buffer_state::CloneMutRef`].*
+        ///
+        /// Users interested in performance *will* require the ability to employ e.g. memory pooling
+        /// and other techniques.
+        pub(crate) type DirPathRef<T> = Arc<T>;
+        /// Object containing the originally-provided path string and directory file descriptor.
+        ///
+        /// *NB: This must implement [`dir_fd::FileDescriptorHandle`] and `AsRef<Path>`.*
+        pub(crate) type ReadDirDirPath = dir_fd::DirWithPath;
+
+        #[inline(always)]
+        pub(crate) fn get_read_dir_buffer_handle() -> ReadDirRef<ReadDirBuffer> {
+            let buf = [mem::MaybeUninit::uninit(); GETDENTS_BUF_DEFAULT_SIZE];
+            Arc::new(buf)
+        }
+
+        #[inline(always)]
+        pub(crate) fn create_dir_path_handle(p: ReadDirDirPath) -> DirPathRef<ReadDirDirPath> {
+            Arc::new(p)
+        }
+
+        #[repr(transparent)]
+        pub struct ReadDir(ReadDirWithBuf<DirPathRef<dir_fd::DirWithPath>,
+                                          ReadDirRef<ReadDirBuffer>>);
+
+        impl fmt::Debug for ReadDir {
+            #[inline]
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                fmt::Debug::fmt(&self.0, f)
+            }
+        }
+
+        #[rustc_const_unstable(feature = "const_convert", issue = "143773")]
+        impl const core::ops::Deref for ReadDir {
+            type Target = ReadDirWithBuf<DirPathRef<dir_fd::DirWithPath>,
+                                          ReadDirRef<ReadDirBuffer>>;
+
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target { &self.0 }
+        }
+
+        #[rustc_const_unstable(feature = "const_convert", issue = "143773")]
+        impl const core::ops::DerefMut for ReadDir {
+            #[inline(always)]
+            fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 }
+        }
+    }
+    _ => {
+        // all DirEntry's will have a reference to this struct
+        struct InnerReadDir {
+            dirp: Dir,
+            root: PathBuf,
+        }
+
+        pub struct ReadDir {
+            inner: Arc<InnerReadDir>,
+            end_of_stream: bool,
+        }
+
+        impl fmt::Debug for ReadDir {
+            #[inline]
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                // This will only be called from std::fs::ReadDir, which will add a "ReadDir()" frame.
+                // Thus the result will be e g 'ReadDir("/home")'
+                fmt::Debug::fmt(&*self.inner.root, f)
+            }
+        }
+    }
+}
+
+cfg_select_has_getdents! {
+    => {
+        impl ReadDir {
+            const fn new(inner: ReadDirWithBuf<DirPathRef<dir_fd::DirWithPath>,
+                                               ReadDirRef<ReadDirBuffer>>) -> Self {
+                Self(inner)
+            }
+        }
+    }
+    _ => {
+        impl ReadDir {
+            fn new(inner: InnerReadDir) -> Self {
+                Self { inner: Arc::new(inner), end_of_stream: false }
+            }
+        }
     }
 }
 
@@ -277,76 +1584,58 @@ struct Dir(*mut libc::DIR);
 unsafe impl Send for Dir {}
 unsafe impl Sync for Dir {}
 
-#[cfg(any(
-    target_os = "aix",
-    target_os = "android",
-    target_os = "freebsd",
-    target_os = "fuchsia",
-    target_os = "hurd",
-    target_os = "illumos",
-    target_os = "linux",
-    target_os = "nto",
-    target_os = "redox",
-    target_os = "solaris",
-    target_os = "vita",
-    target_os = "wasi",
-))]
-pub struct DirEntry {
-    dir: Arc<InnerReadDir>,
-    entry: dirent64_min,
-    // We need to store an owned copy of the entry name on platforms that use
-    // readdir() (not readdir_r()), because a) struct dirent may use a flexible
-    // array to store the name, b) it lives only until the next readdir() call.
-    name: crate::ffi::CString,
-}
-
-// Define a minimal subset of fields we need from `dirent64`, especially since
-// we're not using the immediate `d_name` on these targets. Keeping this as an
-// `entry` field in `DirEntry` helps reduce the `cfg` boilerplate elsewhere.
-#[cfg(any(
-    target_os = "aix",
-    target_os = "android",
-    target_os = "freebsd",
-    target_os = "fuchsia",
-    target_os = "hurd",
-    target_os = "illumos",
-    target_os = "linux",
-    target_os = "nto",
-    target_os = "redox",
-    target_os = "solaris",
-    target_os = "vita",
-    target_os = "wasi",
-))]
-struct dirent64_min {
-    d_ino: u64,
-    #[cfg(not(any(
-        target_os = "solaris",
-        target_os = "illumos",
+cfg_select_has_getdents! {
+    => {
+        #[repr(transparent)]
+        pub struct DirEntry {
+            inner: getdents_iter::Entry<DirPathRef<dir_fd::DirWithPath>, Pin<ReadDirRef<ReadDirBuffer>>>,
+        }
+    }
+    any(
         target_os = "aix",
+        target_os = "android",
+        target_os = "freebsd",
+        target_os = "fuchsia",
+        target_os = "hurd",
+        target_os = "illumos",
+        target_os = "linux",
         target_os = "nto",
+        target_os = "redox",
+        target_os = "solaris",
         target_os = "vita",
-    )))]
-    d_type: u8,
-}
+        target_os = "wasi",
+    ) => {
+        pub struct DirEntry {
+            dir: Arc<InnerReadDir>,
+            entry: dirent64_min,
+            // We need to store an owned copy of the entry name on platforms that use
+            // readdir() (not readdir_r()), because a) struct dirent may use a flexible
+            // array to store the name, b) it lives only until the next readdir() call.
+            name: crate::ffi::CString,
+        }
 
-#[cfg(not(any(
-    target_os = "aix",
-    target_os = "android",
-    target_os = "freebsd",
-    target_os = "fuchsia",
-    target_os = "hurd",
-    target_os = "illumos",
-    target_os = "linux",
-    target_os = "nto",
-    target_os = "redox",
-    target_os = "solaris",
-    target_os = "vita",
-    target_os = "wasi",
-)))]
-pub struct DirEntry {
-    dir: Arc<InnerReadDir>,
-    // The full entry includes a fixed-length `d_name`.
-    entry: dirent64,
+        // Define a minimal subset of fields we need from `dirent64`, especially since
+        // we're not using the immediate `d_name` on these targets. Keeping this as an
+        // `entry` field in `DirEntry` helps reduce the `cfg` boilerplate elsewhere.
+        struct dirent64_min {
+            d_ino: u64,
+            #[cfg(not(any(
+                target_os = "solaris",
+                target_os = "illumos",
+                target_os = "aix",
+                target_os = "nto",
+                target_os = "vita",
+            )))]
+            d_type: u8,
+        }
+    }
+    _ => {
+        pub struct DirEntry {
+            dir: Arc<InnerReadDir>,
+            // The full entry includes a fixed-length `d_name`.
+            entry: dirent64,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -700,18 +1989,24 @@ impl fmt::Debug for FilePermissions {
     }
 }
 
-impl fmt::Debug for ReadDir {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // This will only be called from std::fs::ReadDir, which will add a "ReadDir()" frame.
-        // Thus the result will be e g 'ReadDir("/home")'
-        fmt::Debug::fmt(&*self.inner.root, f)
+cfg_select_has_getdents! {
+    => {
+        impl Iterator for ReadDir {
+            type Item = io::Result<DirEntry>;
+
+            fn next(&mut self) -> Option<Self::Item> {
+                let iter: &mut getdents_iter::Iter<_, _> = self.as_mut();
+                match iter.next() {
+                    None => None,
+                    Some(Ok(entry)) => Some(Ok(DirEntry { inner: entry })),
+                    Some(Err(e)) => Some(Err(e)),
+                }
+            }
+        }
+
+        impl crate::iter::FusedIterator for ReadDir {}
     }
-}
-
-impl Iterator for ReadDir {
-    type Item = io::Result<DirEntry>;
-
-    #[cfg(any(
+    any(
         target_os = "aix",
         target_os = "android",
         target_os = "freebsd",
@@ -724,130 +2019,126 @@ impl Iterator for ReadDir {
         target_os = "solaris",
         target_os = "vita",
         target_os = "wasi",
-    ))]
-    fn next(&mut self) -> Option<io::Result<DirEntry>> {
-        use crate::sys::os::{errno, set_errno};
+    ) => {
+        impl Iterator for ReadDir {
+            type Item = io::Result<DirEntry>;
 
-        if self.end_of_stream {
-            return None;
-        }
+            fn next(&mut self) -> Option<Self::Item> {
+                use crate::sys::os::{errno, set_errno};
 
-        unsafe {
-            loop {
-                // As of POSIX.1-2017, readdir() is not required to be thread safe; only
-                // readdir_r() is. However, readdir_r() cannot correctly handle platforms
-                // with unlimited or variable NAME_MAX. Many modern platforms guarantee
-                // thread safety for readdir() as long an individual DIR* is not accessed
-                // concurrently, which is sufficient for Rust.
-                set_errno(0);
-                let entry_ptr: *const dirent64 = readdir64(self.inner.dirp.0);
-                if entry_ptr.is_null() {
-                    // We either encountered an error, or reached the end. Either way,
-                    // the next call to next() should return None.
-                    self.end_of_stream = true;
-
-                    // To distinguish between errors and end-of-directory, we had to clear
-                    // errno beforehand to check for an error now.
-                    return match errno() {
-                        0 => None,
-                        e => Some(Err(Error::from_raw_os_error(e))),
-                    };
+                if self.end_of_stream {
+                    return None;
                 }
 
-                // The dirent64 struct is a weird imaginary thing that isn't ever supposed
-                // to be worked with by value. Its trailing d_name field is declared
-                // variously as [c_char; 256] or [c_char; 1] on different systems but
-                // either way that size is meaningless; only the offset of d_name is
-                // meaningful. The dirent64 pointers that libc returns from readdir64 are
-                // allowed to point to allocations smaller _or_ LARGER than implied by the
-                // definition of the struct.
-                //
-                // As such, we need to be even more careful with dirent64 than if its
-                // contents were "simply" partially initialized data.
-                //
-                // Like for uninitialized contents, converting entry_ptr to `&dirent64`
-                // would not be legal. However, we can use `&raw const (*entry_ptr).d_name`
-                // to refer the fields individually, because that operation is equivalent
-                // to `byte_offset` and thus does not require the full extent of `*entry_ptr`
-                // to be in bounds of the same allocation, only the offset of the field
-                // being referenced.
+                unsafe {
+                    loop {
+                        // As of POSIX.1-2017, readdir() is not required to be thread safe; only
+                        // readdir_r() is. However, readdir_r() cannot correctly handle platforms
+                        // with unlimited or variable NAME_MAX. Many modern platforms guarantee
+                        // thread safety for readdir() as long an individual DIR* is not accessed
+                        // concurrently, which is sufficient for Rust.
+                        set_errno(0);
+                        let entry_ptr: *const dirent64 = readdir64(self.inner.dirp.0);
+                        if entry_ptr.is_null() {
+                            // We either encountered an error, or reached the end. Either way,
+                            // the next call to next() should return None.
+                            self.end_of_stream = true;
 
-                // d_name is guaranteed to be null-terminated.
-                let name = CStr::from_ptr((&raw const (*entry_ptr).d_name).cast());
-                let name_bytes = name.to_bytes();
-                if name_bytes == b"." || name_bytes == b".." {
-                    continue;
+                            // To distinguish between errors and end-of-directory, we had to clear
+                            // errno beforehand to check for an error now.
+                            return match errno() {
+                                0 => None,
+                                e => Some(Err(Error::from_raw_os_error(e))),
+                            };
+                        }
+
+                        // The dirent64 struct is a weird imaginary thing that isn't ever supposed
+                        // to be worked with by value. Its trailing d_name field is declared
+                        // variously as [c_char; 256] or [c_char; 1] on different systems but
+                        // either way that size is meaningless; only the offset of d_name is
+                        // meaningful. The dirent64 pointers that libc returns from readdir64 are
+                        // allowed to point to allocations smaller _or_ LARGER than implied by the
+                        // definition of the struct.
+                        //
+                        // As such, we need to be even more careful with dirent64 than if its
+                        // contents were "simply" partially initialized data.
+                        //
+                        // Like for uninitialized contents, converting entry_ptr to `&dirent64`
+                        // would not be legal. However, we can use `&raw const (*entry_ptr).d_name`
+                        // to refer the fields individually, because that operation is equivalent
+                        // to `byte_offset` and thus does not require the full extent of `*entry_ptr`
+                        // to be in bounds of the same allocation, only the offset of the field
+                        // being referenced.
+
+                        // d_name is guaranteed to be null-terminated.
+                        let name = CStr::from_ptr((&raw const (*entry_ptr).d_name).cast());
+                        let name_bytes = name.to_bytes();
+                        if name_bytes == b"." || name_bytes == b".." {
+                            continue;
+                        }
+
+                        // When loading from a field, we can skip the `&raw const`; `(*entry_ptr).d_ino` as
+                        // a value expression will do the right thing: `byte_offset` to the field and then
+                        // only access those bytes.
+                        #[cfg(not(target_os = "vita"))]
+                        let entry = dirent64_min {
+                            #[cfg(target_os = "freebsd")]
+                            d_ino: (*entry_ptr).d_fileno,
+                            #[cfg(not(target_os = "freebsd"))]
+                            d_ino: (*entry_ptr).d_ino as u64,
+                            #[cfg(not(any(
+                                target_os = "solaris",
+                                target_os = "illumos",
+                                target_os = "aix",
+                                target_os = "nto",
+                            )))]
+                            d_type: (*entry_ptr).d_type as u8,
+                        };
+
+                        #[cfg(target_os = "vita")]
+                        let entry = dirent64_min { d_ino: 0u64 };
+
+                        return Some(Ok(DirEntry {
+                            entry,
+                            name: name.to_owned(),
+                            dir: Arc::clone(&self.inner),
+                        }));
+                    }
                 }
-
-                // When loading from a field, we can skip the `&raw const`; `(*entry_ptr).d_ino` as
-                // a value expression will do the right thing: `byte_offset` to the field and then
-                // only access those bytes.
-                #[cfg(not(target_os = "vita"))]
-                let entry = dirent64_min {
-                    #[cfg(target_os = "freebsd")]
-                    d_ino: (*entry_ptr).d_fileno,
-                    #[cfg(not(target_os = "freebsd"))]
-                    d_ino: (*entry_ptr).d_ino as u64,
-                    #[cfg(not(any(
-                        target_os = "solaris",
-                        target_os = "illumos",
-                        target_os = "aix",
-                        target_os = "nto",
-                    )))]
-                    d_type: (*entry_ptr).d_type as u8,
-                };
-
-                #[cfg(target_os = "vita")]
-                let entry = dirent64_min { d_ino: 0u64 };
-
-                return Some(Ok(DirEntry {
-                    entry,
-                    name: name.to_owned(),
-                    dir: Arc::clone(&self.inner),
-                }));
             }
         }
     }
+    _ => {
+        impl Iterator for ReadDir {
+            type Item = io::Result<DirEntry>;
 
-    #[cfg(not(any(
-        target_os = "aix",
-        target_os = "android",
-        target_os = "freebsd",
-        target_os = "fuchsia",
-        target_os = "hurd",
-        target_os = "illumos",
-        target_os = "linux",
-        target_os = "nto",
-        target_os = "redox",
-        target_os = "solaris",
-        target_os = "vita",
-        target_os = "wasi",
-    )))]
-    fn next(&mut self) -> Option<io::Result<DirEntry>> {
-        if self.end_of_stream {
-            return None;
-        }
-
-        unsafe {
-            let mut ret = DirEntry { entry: mem::zeroed(), dir: Arc::clone(&self.inner) };
-            let mut entry_ptr = ptr::null_mut();
-            loop {
-                let err = readdir64_r(self.inner.dirp.0, &mut ret.entry, &mut entry_ptr);
-                if err != 0 {
-                    if entry_ptr.is_null() {
-                        // We encountered an error (which will be returned in this iteration), but
-                        // we also reached the end of the directory stream. The `end_of_stream`
-                        // flag is enabled to make sure that we return `None` in the next iteration
-                        // (instead of looping forever)
-                        self.end_of_stream = true;
-                    }
-                    return Some(Err(Error::from_raw_os_error(err)));
-                }
-                if entry_ptr.is_null() {
+            fn next(&mut self) -> Option<Self::Item> {
+                if self.end_of_stream {
                     return None;
                 }
-                if ret.name_bytes() != b"." && ret.name_bytes() != b".." {
-                    return Some(Ok(ret));
+
+                unsafe {
+                    let mut ret = DirEntry { entry: mem::zeroed(), dir: Arc::clone(&self.inner) };
+                    let mut entry_ptr = ptr::null_mut();
+                    loop {
+                        let err = readdir64_r(self.inner.dirp.0, &mut ret.entry, &mut entry_ptr);
+                        if err != 0 {
+                            if entry_ptr.is_null() {
+                                // We encountered an error (which will be returned in this iteration), but
+                                // we also reached the end of the directory stream. The `end_of_stream`
+                                // flag is enabled to make sure that we return `None` in the next iteration
+                                // (instead of looping forever)
+                                self.end_of_stream = true;
+                            }
+                            return Some(Err(Error::from_raw_os_error(err)));
+                        }
+                        if entry_ptr.is_null() {
+                            return None;
+                        }
+                        if ret.name_bytes() != b"." && ret.name_bytes() != b".." {
+                            return Some(Ok(ret));
+                        }
+                    }
                 }
             }
         }
@@ -902,197 +2193,287 @@ impl Drop for Dir {
     }
 }
 
-impl DirEntry {
-    pub fn path(&self) -> PathBuf {
-        self.dir.root.join(self.file_name_os_str())
+cfg_select_has_getdents! {
+    => {
+        impl DirEntry {
+            pub fn path(&self) -> PathBuf {
+                let p: &ReadDirDirPath = self.inner.parent.as_ref();
+                let p: &Path = p.as_ref();
+                p.join(self.file_name_os_str())
+            }
+            #[inline]
+            pub fn file_name(&self) -> OsString {
+                self.file_name_os_str().to_os_string()
+            }
+            #[inline(always)]
+            fn name_cstr(&self) -> &CStr {
+                /* FIXME: use the region-bounded method we developed earlier for this! */
+                unsafe { mem::transmute(self.inner.as_dirent().name()) }
+            }
+            #[inline(always)]
+            fn name_bytes(&self) -> &[u8] {
+                self.name_cstr().to_bytes()
+            }
+            #[inline]
+            pub fn file_name_os_str(&self) -> &OsStr {
+                OsStr::from_bytes(self.name_bytes())
+            }
+
+            #[inline(always)]
+            pub fn ino(&self) -> u64 {
+                self.inner.as_dirent().inode() as u64
+            }
+
+            cfg_select! {
+                any(
+                    // No type:
+                    target_os = "solaris",
+                    target_os = "illumos",
+                    target_os = "aix",
+                    target_os = "nto",
+                    target_os = "haiku",
+                    target_os = "vxworks",
+                    // Neither ino nor type:
+                    target_os = "vita",
+                    target_os = "nuttx",
+                ) => {
+                    #[inline]
+                    pub fn file_type(&self) -> io::Result<FileType> {
+                        self.metadata().map(|m| m.file_type())
+                    }
+                }
+                _ => {
+                    #[inline(always)]
+                    const fn eager_type(&self) -> EagerFileType {
+                        self.inner.as_dirent().eager_type()
+                    }
+                    #[inline]
+                    pub fn file_type(&self) -> io::Result<FileType> {
+                        match self.eager_type().as_file_type() {
+                            Some(ty) => Ok(ty),
+                            None => self.metadata().map(|m| m.file_type()),
+                        }
+                    }
+                }
+            }
+
+            cfg_select! {
+                all(
+                    any(
+                        target_os = "linux",
+                        target_os = "android",
+                        target_os = "fuchsia",
+                        target_os = "hurd",
+                        target_os = "illumos",
+                        target_vendor = "apple",
+                    ),
+                    not(miri) // no dirfd on Miri
+                ) => {
+                    pub fn metadata(&self) -> io::Result<FileAttr> {
+                        use dir_fd::FileDescriptorHandle;
+                        let fd = *self.inner.parent.as_fd();
+                        let name = self.name_cstr().as_ptr();
+
+                        cfg_has_statx! {
+                            if let Some(ret) = unsafe { try_statx(
+                                fd,
+                                name,
+                                libc::AT_SYMLINK_NOFOLLOW | libc::AT_STATX_SYNC_AS_STAT,
+                                libc::STATX_BASIC_STATS | libc::STATX_BTIME,
+                            ) } {
+                                return ret;
+                            }
+                        }
+
+                        let mut stat: stat64 = unsafe { mem::zeroed() };
+                        cvt(unsafe { fstatat64(fd, name, &mut stat, libc::AT_SYMLINK_NOFOLLOW) })?;
+                        Ok(FileAttr::from_stat64(stat))
+                    }
+                }
+                _ => {
+                    pub fn metadata(&self) -> io::Result<FileAttr> {
+                        run_path_with_cstr(&self.path(), &lstat)
+                    }
+                }
+            }
+
+        }
     }
+    _ => {
+        impl DirEntry {
+            pub fn path(&self) -> PathBuf {
+                self.dir.root.join(self.file_name_os_str())
+            }
 
-    pub fn file_name(&self) -> OsString {
-        self.file_name_os_str().to_os_string()
-    }
+            pub fn file_name(&self) -> OsString {
+                self.file_name_os_str().to_os_string()
+            }
 
-    #[cfg(all(
-        any(
-            all(target_os = "linux", not(target_env = "musl")),
-            target_os = "android",
-            target_os = "fuchsia",
-            target_os = "hurd",
-            target_os = "illumos",
-            target_vendor = "apple",
-        ),
-        not(miri) // no dirfd on Miri
-    ))]
-    pub fn metadata(&self) -> io::Result<FileAttr> {
-        let fd = cvt(unsafe { dirfd(self.dir.dirp.0) })?;
-        let name = self.name_cstr().as_ptr();
+            cfg_select! {
+                all(
+                    any(
+                        target_os = "linux",
+                        target_os = "android",
+                        target_os = "fuchsia",
+                        target_os = "hurd",
+                        target_os = "illumos",
+                        target_vendor = "apple",
+                    ),
+                    not(miri) // no dirfd on Miri
+                ) => {
+                    pub fn metadata(&self) -> io::Result<FileAttr> {
+                        let fd = cvt(unsafe { dirfd(self.dir.dirp.0) })?;
+                        let name = self.name_cstr().as_ptr();
 
-        cfg_has_statx! {
-            if let Some(ret) = unsafe { try_statx(
-                fd,
-                name,
-                libc::AT_SYMLINK_NOFOLLOW | libc::AT_STATX_SYNC_AS_STAT,
-                libc::STATX_BASIC_STATS | libc::STATX_BTIME,
-            ) } {
-                return ret;
+                        cfg_has_statx! {
+                            if let Some(ret) = unsafe { try_statx(
+                                fd,
+                                name,
+                                libc::AT_SYMLINK_NOFOLLOW | libc::AT_STATX_SYNC_AS_STAT,
+                                libc::STATX_BASIC_STATS | libc::STATX_BTIME,
+                            ) } {
+                                return ret;
+                            }
+                        }
+
+                        let mut stat: stat64 = unsafe { mem::zeroed() };
+                        cvt(unsafe { fstatat64(fd, name, &mut stat, libc::AT_SYMLINK_NOFOLLOW) })?;
+                        Ok(FileAttr::from_stat64(stat))
+                    }
+                }
+                _ => {
+                    pub fn metadata(&self) -> io::Result<FileAttr> {
+                        run_path_with_cstr(&self.path(), &lstat)
+                    }
+                }
+            }
+
+            cfg_select! {
+                any(
+                    target_os = "solaris",
+                    target_os = "illumos",
+                    target_os = "haiku",
+                    target_os = "vxworks",
+                    target_os = "aix",
+                    target_os = "nto",
+                    target_os = "vita",
+                ) => {
+                    pub fn file_type(&self) -> io::Result<FileType> {
+                        self.metadata().map(|m| m.file_type())
+                    }
+                }
+                _ => {
+                    pub fn file_type(&self) -> io::Result<FileType> {
+                        match self.entry.d_type {
+                            libc::DT_CHR => Ok(FileType { mode: libc::S_IFCHR }),
+                            libc::DT_FIFO => Ok(FileType { mode: libc::S_IFIFO }),
+                            libc::DT_LNK => Ok(FileType { mode: libc::S_IFLNK }),
+                            libc::DT_REG => Ok(FileType { mode: libc::S_IFREG }),
+                            libc::DT_SOCK => Ok(FileType { mode: libc::S_IFSOCK }),
+                            libc::DT_DIR => Ok(FileType { mode: libc::S_IFDIR }),
+                            libc::DT_BLK => Ok(FileType { mode: libc::S_IFBLK }),
+                            _ => self.metadata().map(|m| m.file_type()),
+                        }
+                    }
+                }
+            }
+
+            cfg_select! {
+                any(
+                    target_os = "aix",
+                    target_os = "android",
+                    target_os = "cygwin",
+                    target_os = "emscripten",
+                    target_os = "espidf",
+                    target_os = "freebsd",
+                    target_os = "fuchsia",
+                    target_os = "haiku",
+                    target_os = "horizon",
+                    target_os = "hurd",
+                    target_os = "illumos",
+                    target_os = "l4re",
+                    target_os = "linux",
+                    target_os = "nto",
+                    target_os = "redox",
+                    target_os = "rtems",
+                    target_os = "solaris",
+                    target_os = "vita",
+                    target_os = "vxworks",
+                    target_os = "wasi",
+                    target_vendor = "apple",
+                ) => {
+                    pub fn ino(&self) -> u64 {
+                        self.entry.d_ino as u64
+                    }
+                }
+                any(target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly") => {
+                    pub fn ino(&self) -> u64 {
+                        self.entry.d_fileno as u64
+                    }
+                }
+                target_os = "nuttx" => {
+                    pub fn ino(&self) -> u64 {
+                        // Leave this 0 for now, as NuttX does not provide an inode number
+                        // in its directory entries.
+                        0
+                    }
+                }
+            }
+
+            cfg_select! {
+                any(
+                    target_os = "netbsd",
+                    target_os = "openbsd",
+                    target_os = "dragonfly",
+                    target_vendor = "apple",
+                ) => {
+                    fn name_bytes(&self) -> &[u8] {
+                        use crate::slice;
+                        unsafe {
+                            slice::from_raw_parts(
+                                self.entry.d_name.as_ptr() as *const u8,
+                                self.entry.d_namlen as usize,
+                            )
+                        }
+                    }
+                }
+                _ => {
+                    fn name_bytes(&self) -> &[u8] {
+                        self.name_cstr().to_bytes()
+                    }
+                }
+            }
+
+            cfg_select! {
+                any(
+                    target_os = "android",
+                    target_os = "freebsd",
+                    target_os = "linux",
+                    target_os = "solaris",
+                    target_os = "illumos",
+                    target_os = "fuchsia",
+                    target_os = "redox",
+                    target_os = "aix",
+                    target_os = "nto",
+                    target_os = "vita",
+                    target_os = "hurd",
+                    target_os = "wasi",
+                ) => {
+                    fn name_cstr(&self) -> &CStr {
+                        &self.name
+                    }
+                }
+                _ => {
+                    fn name_cstr(&self) -> &CStr {
+                        unsafe { CStr::from_ptr(self.entry.d_name.as_ptr()) }
+                    }
+                }
+            }
+
+            pub fn file_name_os_str(&self) -> &OsStr {
+                OsStr::from_bytes(self.name_bytes())
             }
         }
-
-        let mut stat: stat64 = unsafe { mem::zeroed() };
-        cvt(unsafe { fstatat64(fd, name, &mut stat, libc::AT_SYMLINK_NOFOLLOW) })?;
-        Ok(FileAttr::from_stat64(stat))
-    }
-
-    #[cfg(any(
-        not(any(
-            all(target_os = "linux", not(target_env = "musl")),
-            target_os = "android",
-            target_os = "fuchsia",
-            target_os = "hurd",
-            target_os = "illumos",
-            target_vendor = "apple",
-        )),
-        miri
-    ))]
-    pub fn metadata(&self) -> io::Result<FileAttr> {
-        run_path_with_cstr(&self.path(), &lstat)
-    }
-
-    #[cfg(any(
-        target_os = "solaris",
-        target_os = "illumos",
-        target_os = "haiku",
-        target_os = "vxworks",
-        target_os = "aix",
-        target_os = "nto",
-        target_os = "vita",
-    ))]
-    pub fn file_type(&self) -> io::Result<FileType> {
-        self.metadata().map(|m| m.file_type())
-    }
-
-    #[cfg(not(any(
-        target_os = "solaris",
-        target_os = "illumos",
-        target_os = "haiku",
-        target_os = "vxworks",
-        target_os = "aix",
-        target_os = "nto",
-        target_os = "vita",
-    )))]
-    pub fn file_type(&self) -> io::Result<FileType> {
-        match self.entry.d_type {
-            libc::DT_CHR => Ok(FileType { mode: libc::S_IFCHR }),
-            libc::DT_FIFO => Ok(FileType { mode: libc::S_IFIFO }),
-            libc::DT_LNK => Ok(FileType { mode: libc::S_IFLNK }),
-            libc::DT_REG => Ok(FileType { mode: libc::S_IFREG }),
-            libc::DT_SOCK => Ok(FileType { mode: libc::S_IFSOCK }),
-            libc::DT_DIR => Ok(FileType { mode: libc::S_IFDIR }),
-            libc::DT_BLK => Ok(FileType { mode: libc::S_IFBLK }),
-            _ => self.metadata().map(|m| m.file_type()),
-        }
-    }
-
-    #[cfg(any(
-        target_os = "aix",
-        target_os = "android",
-        target_os = "cygwin",
-        target_os = "emscripten",
-        target_os = "espidf",
-        target_os = "freebsd",
-        target_os = "fuchsia",
-        target_os = "haiku",
-        target_os = "horizon",
-        target_os = "hurd",
-        target_os = "illumos",
-        target_os = "l4re",
-        target_os = "linux",
-        target_os = "nto",
-        target_os = "redox",
-        target_os = "rtems",
-        target_os = "solaris",
-        target_os = "vita",
-        target_os = "vxworks",
-        target_os = "wasi",
-        target_vendor = "apple",
-    ))]
-    pub fn ino(&self) -> u64 {
-        self.entry.d_ino as u64
-    }
-
-    #[cfg(any(target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly"))]
-    pub fn ino(&self) -> u64 {
-        self.entry.d_fileno as u64
-    }
-
-    #[cfg(target_os = "nuttx")]
-    pub fn ino(&self) -> u64 {
-        // Leave this 0 for now, as NuttX does not provide an inode number
-        // in its directory entries.
-        0
-    }
-
-    #[cfg(any(
-        target_os = "netbsd",
-        target_os = "openbsd",
-        target_os = "dragonfly",
-        target_vendor = "apple",
-    ))]
-    fn name_bytes(&self) -> &[u8] {
-        use crate::slice;
-        unsafe {
-            slice::from_raw_parts(
-                self.entry.d_name.as_ptr() as *const u8,
-                self.entry.d_namlen as usize,
-            )
-        }
-    }
-    #[cfg(not(any(
-        target_os = "netbsd",
-        target_os = "openbsd",
-        target_os = "dragonfly",
-        target_vendor = "apple",
-    )))]
-    fn name_bytes(&self) -> &[u8] {
-        self.name_cstr().to_bytes()
-    }
-
-    #[cfg(not(any(
-        target_os = "android",
-        target_os = "freebsd",
-        target_os = "linux",
-        target_os = "solaris",
-        target_os = "illumos",
-        target_os = "fuchsia",
-        target_os = "redox",
-        target_os = "aix",
-        target_os = "nto",
-        target_os = "vita",
-        target_os = "hurd",
-        target_os = "wasi",
-    )))]
-    fn name_cstr(&self) -> &CStr {
-        unsafe { CStr::from_ptr(self.entry.d_name.as_ptr()) }
-    }
-    #[cfg(any(
-        target_os = "android",
-        target_os = "freebsd",
-        target_os = "linux",
-        target_os = "solaris",
-        target_os = "illumos",
-        target_os = "fuchsia",
-        target_os = "redox",
-        target_os = "aix",
-        target_os = "nto",
-        target_os = "vita",
-        target_os = "hurd",
-        target_os = "wasi",
-    ))]
-    fn name_cstr(&self) -> &CStr {
-        &self.name
-    }
-
-    pub fn file_name_os_str(&self) -> &OsStr {
-        OsStr::from_bytes(self.name_bytes())
     }
 }
 
@@ -2017,14 +3398,33 @@ impl fmt::Debug for Mode {
     }
 }
 
-pub fn readdir(path: &Path) -> io::Result<ReadDir> {
-    let ptr = run_path_with_cstr(path, &|p| unsafe { Ok(libc::opendir(p.as_ptr())) })?;
-    if ptr.is_null() {
-        Err(Error::last_os_error())
-    } else {
-        let root = path.to_path_buf();
-        let inner = InnerReadDir { dirp: Dir(ptr), root };
-        Ok(ReadDir::new(inner))
+cfg_select_has_getdents! {
+    => {
+        pub fn readdir(path: &Path) -> io::Result<ReadDir> {
+            let ptr = run_path_with_cstr(path, &|p| unsafe { Ok(libc::opendir(p.as_ptr())) })?;
+            if ptr.is_null() {
+                Err(Error::last_os_error())
+            } else {
+                let dir = dir_fd::DirWithPath::from_dir_and_path(Dir(ptr), path);
+                let dir = create_dir_path_handle(dir);
+                let buf = get_read_dir_buffer_handle();
+                let inner = ReadDirWithBuf::with_buf(dir, buf);
+                Ok(ReadDir::new(inner))
+            }
+        }
+    }
+    _ => {
+        pub fn readdir(path: &Path) -> io::Result<ReadDir> {
+            let ptr = run_path_with_cstr(path, &|p| unsafe { Ok(libc::opendir(p.as_ptr())) })?;
+            if ptr.is_null() {
+                Err(Error::last_os_error())
+            } else {
+                let root = path.to_path_buf();
+                let inner = InnerReadDir { dirp: Dir(ptr), root };
+                Ok(ReadDir::new(inner))
+            }
+        }
+
     }
 }
 
@@ -2482,9 +3882,16 @@ mod remove_dir_impl {
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     use libc::{fdopendir, openat64 as openat, unlinkat};
 
-    use super::{
-        AsRawFd, Dir, DirEntry, FromRawFd, InnerReadDir, IntoRawFd, OwnedFd, RawFd, ReadDir, lstat,
-    };
+    use super::{AsRawFd, Dir, DirEntry, FromRawFd, IntoRawFd, OwnedFd, RawFd, ReadDir, lstat};
+    cfg_select_has_getdents! {
+        => {
+            use super::ReadDirWithBuf;
+            use super::dir_fd::FileDescriptorHandle;
+        }
+        _ => {
+            use super::InnerReadDir;
+        }
+    }
     use crate::ffi::CStr;
     use crate::io;
     use crate::path::{Path, PathBuf};
@@ -2503,44 +3910,68 @@ mod remove_dir_impl {
         Ok(unsafe { OwnedFd::from_raw_fd(fd) })
     }
 
-    fn fdreaddir(dir_fd: OwnedFd) -> io::Result<(ReadDir, RawFd)> {
-        let ptr = unsafe { fdopendir(dir_fd.as_raw_fd()) };
-        if ptr.is_null() {
-            return Err(io::Error::last_os_error());
+    cfg_select_has_getdents! {
+        => {
+            fn fdreaddir(dir_fd: OwnedFd) -> io::Result<(ReadDir, RawFd)> {
+                // a valid root is not needed because we do not call any functions involving the
+                // full path of the `DirEntry`s.
+                let dir = super::dir_fd::DirWithPath::from_owned_dir_fd_and_path(dir_fd, PathBuf::new());
+                let dir = super::create_dir_path_handle(dir);
+                let buf = super::get_read_dir_buffer_handle();
+                let inner = ReadDirWithBuf::with_buf(dir, buf);
+                /* FIXME: THIS TOTALLY BREAKS ALL OUR CAREFUL PLANNING WITH THE MUTEX AND TRAIT! */
+                let fd = *inner.as_fd();
+                let ret = ReadDir::new(inner);
+                Ok((ret, fd))
+            }
         }
-        let dirp = Dir(ptr);
-        // file descriptor is automatically closed by libc::closedir() now, so give up ownership
-        let new_parent_fd = dir_fd.into_raw_fd();
-        // a valid root is not needed because we do not call any functions involving the full path
-        // of the `DirEntry`s.
-        let dummy_root = PathBuf::new();
-        let inner = InnerReadDir { dirp, root: dummy_root };
-        Ok((ReadDir::new(inner), new_parent_fd))
+        _ => {
+            fn fdreaddir(dir_fd: OwnedFd) -> io::Result<(ReadDir, RawFd)> {
+                let ptr = unsafe { fdopendir(dir_fd.as_raw_fd()) };
+                if ptr.is_null() {
+                    return Err(io::Error::last_os_error());
+                }
+                let dirp = Dir(ptr);
+                // file descriptor is automatically closed by libc::closedir() now, so give up ownership
+                let new_parent_fd = dir_fd.into_raw_fd();
+                // a valid root is not needed because we do not call any functions involving the full path
+                // of the `DirEntry`s.
+                let dummy_root = PathBuf::new();
+                let inner = InnerReadDir { dirp, root: dummy_root };
+                Ok((ReadDir::new(inner), new_parent_fd))
+            }
+        }
     }
 
-    #[cfg(any(
-        target_os = "solaris",
-        target_os = "illumos",
-        target_os = "haiku",
-        target_os = "vxworks",
-        target_os = "aix",
-    ))]
-    fn is_dir(_ent: &DirEntry) -> Option<bool> {
-        None
-    }
-
-    #[cfg(not(any(
-        target_os = "solaris",
-        target_os = "illumos",
-        target_os = "haiku",
-        target_os = "vxworks",
-        target_os = "aix",
-    )))]
-    fn is_dir(ent: &DirEntry) -> Option<bool> {
-        match ent.entry.d_type {
-            libc::DT_UNKNOWN => None,
-            libc::DT_DIR => Some(true),
-            _ => Some(false),
+    cfg_select_has_getdents! {
+        => {
+            fn is_dir(ent: &DirEntry) -> Option<bool> {
+                match ent.inner.eager_dirent.eager_type() {
+                    super::EagerFileType::Directory => Some(true),
+                    super::EagerFileType::Unknown => None,
+                    _ => Some(false),
+                }
+            }
+        }
+        any(
+            target_os = "solaris",
+            target_os = "illumos",
+            target_os = "haiku",
+            target_os = "vxworks",
+            target_os = "aix",
+        ) => {
+            fn is_dir(_ent: &DirEntry) -> Option<bool> {
+                None
+            }
+        }
+        _ => {
+            fn is_dir(ent: &DirEntry) -> Option<bool> {
+                match ent.entry.d_type {
+                    libc::DT_UNKNOWN => None,
+                    libc::DT_DIR => Some(true),
+                    _ => Some(false),
+                }
+            }
         }
     }
 
