@@ -1,6 +1,7 @@
 use crate::cmp;
 use crate::iter::adapters::SourceIter;
 use crate::iter::{FusedIterator, InPlaceIterable, TrustedFused, TrustedLen, TrustedRandomAccess};
+use crate::marker::Destruct;
 use crate::num::NonZero;
 use crate::ops::{ControlFlow, Try};
 
@@ -20,15 +21,18 @@ pub struct Take<I> {
 }
 
 impl<I> Take<I> {
-    pub(in crate::iter) fn new(iter: I, n: usize) -> Take<I> {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub(in crate::iter) const fn new(iter: I, n: usize) -> Take<I> {
         Take { iter, n }
     }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<I> Iterator for Take<I>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I> const Iterator for Take<I>
 where
-    I: Iterator,
+    I: [const] Iterator,
+    I::Item: [const] Destruct,
 {
     type Item = <I as Iterator>::Item;
 
@@ -77,10 +81,10 @@ where
     #[inline]
     fn try_fold<Acc, Fold, R>(&mut self, init: Acc, fold: Fold) -> R
     where
-        Fold: FnMut(Acc, Self::Item) -> R,
-        R: Try<Output = Acc>,
+        Fold: [const] FnMut(Acc, Self::Item) -> R,
+        R: [const] Try<Output = Acc>,
     {
-        fn check<'a, T, Acc, R: Try<Output = Acc>>(
+        fn check<'a, T, Acc, R: [const] Try<Output = Acc>>(
             n: &'a mut usize,
             mut fold: impl FnMut(Acc, T) -> R + 'a,
         ) -> impl FnMut(Acc, T) -> ControlFlow<R, Acc> + 'a {
@@ -103,13 +107,13 @@ where
     fn fold<B, F>(self, init: B, f: F) -> B
     where
         Self: Sized,
-        F: FnMut(B, Self::Item) -> B,
+        F: [const] Destruct + [const] FnMut(B, Self::Item) -> B,
     {
         Self::spec_fold(self, init, f)
     }
 
     #[inline]
-    fn for_each<F: FnMut(Self::Item)>(self, f: F) {
+    fn for_each<F: [const] Destruct + [const] FnMut(Self::Item)>(self, f: F) {
         Self::spec_for_each(self, f)
     }
 
@@ -128,9 +132,10 @@ where
 }
 
 #[unstable(issue = "none", feature = "inplace_iteration")]
-unsafe impl<I> SourceIter for Take<I>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I> const SourceIter for Take<I>
 where
-    I: SourceIter,
+    I: [const] SourceIter,
 {
     type Source = I::Source;
 
@@ -142,15 +147,18 @@ where
 }
 
 #[unstable(issue = "none", feature = "inplace_iteration")]
-unsafe impl<I: InPlaceIterable> InPlaceIterable for Take<I> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I: [const] InPlaceIterable> const InPlaceIterable for Take<I> {
     const EXPAND_BY: Option<NonZero<usize>> = I::EXPAND_BY;
     const MERGE_BY: Option<NonZero<usize>> = I::MERGE_BY;
 }
 
 #[stable(feature = "double_ended_take_iterator", since = "1.38.0")]
-impl<I> DoubleEndedIterator for Take<I>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I> const DoubleEndedIterator for Take<I>
 where
-    I: DoubleEndedIterator + ExactSizeIterator,
+    I: [const] DoubleEndedIterator + [const] ExactSizeIterator + [const] Destruct,
+    I::Item: [const] Destruct,
 {
     #[inline]
     fn next_back(&mut self) -> Option<Self::Item> {
@@ -182,8 +190,8 @@ where
     fn try_rfold<Acc, Fold, R>(&mut self, init: Acc, fold: Fold) -> R
     where
         Self: Sized,
-        Fold: FnMut(Acc, Self::Item) -> R,
-        R: Try<Output = Acc>,
+        Fold: [const] Destruct + [const] FnMut(Acc, Self::Item) -> R,
+        R: [const] Try<Output = Acc>,
     {
         if self.n == 0 {
             try { init }
@@ -201,7 +209,7 @@ where
     fn rfold<Acc, Fold>(mut self, init: Acc, fold: Fold) -> Acc
     where
         Self: Sized,
-        Fold: FnMut(Acc, Self::Item) -> Acc,
+        Fold: [const] Destruct + [const] FnMut(Acc, Self::Item) -> Acc,
     {
         if self.n == 0 {
             init
@@ -238,45 +246,51 @@ where
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<I> ExactSizeIterator for Take<I> where I: ExactSizeIterator {}
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I> const ExactSizeIterator for Take<I> where I: [const] ExactSizeIterator {}
 
 #[stable(feature = "fused", since = "1.26.0")]
-impl<I> FusedIterator for Take<I> where I: FusedIterator {}
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I> const FusedIterator for Take<I> where I: [const] FusedIterator {}
 
 #[unstable(issue = "none", feature = "trusted_fused")]
-unsafe impl<I: TrustedFused> TrustedFused for Take<I> {}
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I: [const] TrustedFused> const TrustedFused for Take<I> {}
 
 #[unstable(feature = "trusted_len", issue = "37572")]
-unsafe impl<I: TrustedLen> TrustedLen for Take<I> {}
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I: [const] TrustedLen> const TrustedLen for Take<I> {}
 
-trait SpecTake: Iterator {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+const trait SpecTake: [const] Iterator {
     fn spec_fold<B, F>(self, init: B, f: F) -> B
     where
         Self: Sized,
-        F: FnMut(B, Self::Item) -> B;
+        F: [const] Destruct + [const] FnMut(B, Self::Item) -> B;
 
-    fn spec_for_each<F: FnMut(Self::Item)>(self, f: F);
+    fn spec_for_each<F: [const] Destruct + [const] FnMut(Self::Item)>(self, f: F);
 }
 
-impl<I: Iterator> SpecTake for Take<I> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I: [const] Iterator> const SpecTake for Take<I> {
     #[inline]
     default fn spec_fold<B, F>(mut self, init: B, f: F) -> B
     where
         Self: Sized,
-        F: FnMut(B, Self::Item) -> B,
+        F: [const] Destruct + [const] FnMut(B, Self::Item) -> B,
     {
         use crate::ops::NeverShortCircuit;
         self.try_fold(init, NeverShortCircuit::wrap_mut_2(f)).0
     }
 
     #[inline]
-    default fn spec_for_each<F: FnMut(Self::Item)>(mut self, f: F) {
+    default fn spec_for_each<F: [const] Destruct + [const] FnMut(Self::Item)>(mut self, f: F) {
         // The default implementation would use a unit accumulator, so we can
         // avoid a stateful closure by folding over the remaining number
         // of items we wish to return instead.
         fn check<'a, Item>(
-            mut action: impl FnMut(Item) + 'a,
-        ) -> impl FnMut(usize, Item) -> Option<usize> + 'a {
+            mut action: impl [const] FnMut(Item) + 'a,
+        ) -> impl [const] FnMut(usize, Item) -> Option<usize> + 'a {
             move |more, x| {
                 action(x);
                 more.checked_sub(1)
@@ -290,12 +304,14 @@ impl<I: Iterator> SpecTake for Take<I> {
     }
 }
 
-impl<I: Iterator + TrustedRandomAccess> SpecTake for Take<I> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I: [const] Iterator + [const] TrustedRandomAccess> const SpecTake for Take<I> {
     #[inline]
     fn spec_fold<B, F>(mut self, init: B, mut f: F) -> B
     where
         Self: Sized,
-        F: FnMut(B, Self::Item) -> B,
+        F: [const] Destruct + [const] FnMut(B, Self::Item) -> B,
     {
         let mut acc = init;
         let end = self.n.min(self.iter.size());
@@ -308,7 +324,7 @@ impl<I: Iterator + TrustedRandomAccess> SpecTake for Take<I> {
     }
 
     #[inline]
-    fn spec_for_each<F: FnMut(Self::Item)>(mut self, mut f: F) {
+    fn spec_for_each<F: [const] Destruct + [const] FnMut(Self::Item)>(mut self, mut f: F) {
         let end = self.n.min(self.iter.size());
         for i in 0..end {
             // SAFETY: i < end <= self.iter.size() and we discard the iterator at the end
@@ -319,7 +335,8 @@ impl<I: Iterator + TrustedRandomAccess> SpecTake for Take<I> {
 }
 
 #[stable(feature = "exact_size_take_repeat", since = "1.82.0")]
-impl<T: Clone> DoubleEndedIterator for Take<crate::iter::Repeat<T>> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<T: [const] Clone> const DoubleEndedIterator for Take<crate::iter::Repeat<T>> {
     #[inline]
     fn next_back(&mut self) -> Option<Self::Item> {
         self.next()
@@ -334,8 +351,8 @@ impl<T: Clone> DoubleEndedIterator for Take<crate::iter::Repeat<T>> {
     fn try_rfold<Acc, Fold, R>(&mut self, init: Acc, fold: Fold) -> R
     where
         Self: Sized,
-        Fold: FnMut(Acc, Self::Item) -> R,
-        R: Try<Output = Acc>,
+        Fold: [const] FnMut(Acc, Self::Item) -> R,
+        R: [const] Try<Output = Acc>,
     {
         self.try_fold(init, fold)
     }
@@ -344,7 +361,7 @@ impl<T: Clone> DoubleEndedIterator for Take<crate::iter::Repeat<T>> {
     fn rfold<Acc, Fold>(self, init: Acc, fold: Fold) -> Acc
     where
         Self: Sized,
-        Fold: FnMut(Acc, Self::Item) -> Acc,
+        Fold: [const] FnMut(Acc, Self::Item) -> Acc,
     {
         self.fold(init, fold)
     }
@@ -362,14 +379,16 @@ impl<T: Clone> DoubleEndedIterator for Take<crate::iter::Repeat<T>> {
 // by n-1st without remembering all results.
 
 #[stable(feature = "exact_size_take_repeat", since = "1.82.0")]
-impl<T: Clone> ExactSizeIterator for Take<crate::iter::Repeat<T>> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<T: [const] Clone> const ExactSizeIterator for Take<crate::iter::Repeat<T>> {
     fn len(&self) -> usize {
         self.n
     }
 }
 
 #[stable(feature = "exact_size_take_repeat", since = "1.82.0")]
-impl<F: FnMut() -> A, A> ExactSizeIterator for Take<crate::iter::RepeatWith<F>> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<F: [const] Destruct + [const] FnMut() -> A, A> const ExactSizeIterator for Take<crate::iter::RepeatWith<F>> {
     fn len(&self) -> usize {
         self.n
     }

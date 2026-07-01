@@ -1,6 +1,7 @@
 use crate::fmt;
 use crate::iter::InPlaceIterable;
 use crate::iter::adapters::SourceIter;
+use crate::marker::Destruct;
 use crate::num::NonZero;
 use crate::ops::{ControlFlow, Try};
 
@@ -21,7 +22,8 @@ pub struct Scan<I, St, F> {
 }
 
 impl<I, St, F> Scan<I, St, F> {
-    pub(in crate::iter) fn new(iter: I, state: St, f: F) -> Scan<I, St, F> {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub(in crate::iter) const fn new(iter: I, state: St, f: F) -> Scan<I, St, F> {
         Scan { iter, state, f }
     }
 }
@@ -34,10 +36,11 @@ impl<I: fmt::Debug, St: fmt::Debug, F> fmt::Debug for Scan<I, St, F> {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<B, I, St, F> Iterator for Scan<I, St, F>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<B, I, St, F> const Iterator for Scan<I, St, F>
 where
-    I: Iterator,
-    F: FnMut(&mut St, I::Item) -> Option<B>,
+    I: [const] Iterator,
+    F: [const] Destruct + [const] FnMut(&mut St, I::Item) -> Option<B>,
 {
     type Item = B;
 
@@ -57,10 +60,10 @@ where
     fn try_fold<Acc, Fold, R>(&mut self, init: Acc, fold: Fold) -> R
     where
         Self: Sized,
-        Fold: FnMut(Acc, Self::Item) -> R,
-        R: Try<Output = Acc>,
+        Fold: [const] FnMut(Acc, Self::Item) -> R,
+        R: [const] Try<Output = Acc>,
     {
-        fn scan<'a, T, St, B, Acc, R: Try<Output = Acc>>(
+        fn scan<'a, T, St, B, Acc, R: [const] Try<Output = Acc>>(
             state: &'a mut St,
             f: &'a mut impl FnMut(&mut St, T) -> Option<B>,
             mut fold: impl FnMut(Acc, B) -> R + 'a,
@@ -80,9 +83,10 @@ where
 }
 
 #[unstable(issue = "none", feature = "inplace_iteration")]
-unsafe impl<St, F, I> SourceIter for Scan<I, St, F>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<St, F, I> const SourceIter for Scan<I, St, F>
 where
-    I: SourceIter,
+    I: [const] SourceIter,
 {
     type Source = I::Source;
 
@@ -94,7 +98,8 @@ where
 }
 
 #[unstable(issue = "none", feature = "inplace_iteration")]
-unsafe impl<St, F, I: InPlaceIterable> InPlaceIterable for Scan<I, St, F> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<St, F, I: [const] InPlaceIterable> const InPlaceIterable for Scan<I, St, F> {
     const EXPAND_BY: Option<NonZero<usize>> = I::EXPAND_BY;
     const MERGE_BY: Option<NonZero<usize>> = I::MERGE_BY;
 }

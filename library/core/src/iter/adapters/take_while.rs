@@ -1,6 +1,7 @@
 use crate::fmt;
 use crate::iter::adapters::SourceIter;
 use crate::iter::{FusedIterator, InPlaceIterable, TrustedFused};
+use crate::marker::Destruct;
 use crate::num::NonZero;
 use crate::ops::{ControlFlow, Try};
 
@@ -21,7 +22,8 @@ pub struct TakeWhile<I, P> {
 }
 
 impl<I, P> TakeWhile<I, P> {
-    pub(in crate::iter) fn new(iter: I, predicate: P) -> TakeWhile<I, P> {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub(in crate::iter) const fn new(iter: I, predicate: P) -> TakeWhile<I, P> {
         TakeWhile { iter, flag: false, predicate }
     }
 }
@@ -34,9 +36,10 @@ impl<I: fmt::Debug, P> fmt::Debug for TakeWhile<I, P> {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<I: Iterator, P> Iterator for TakeWhile<I, P>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I: [const] Iterator, P> const Iterator for TakeWhile<I, P>
 where
-    P: FnMut(&I::Item) -> bool,
+    P: [const] FnMut(&I::Item) -> bool,
 {
     type Item = I::Item;
 
@@ -69,10 +72,10 @@ where
     fn try_fold<Acc, Fold, R>(&mut self, init: Acc, fold: Fold) -> R
     where
         Self: Sized,
-        Fold: FnMut(Acc, Self::Item) -> R,
-        R: Try<Output = Acc>,
+        Fold: [const] FnMut(Acc, Self::Item) -> R,
+        R: [const] Try<Output = Acc>,
     {
-        fn check<'a, T, Acc, R: Try<Output = Acc>>(
+        fn check<'a, T, Acc, R: [const] Try<Output = Acc>>(
             flag: &'a mut bool,
             p: &'a mut impl FnMut(&T) -> bool,
             mut fold: impl FnMut(Acc, T) -> R + 'a,
@@ -100,20 +103,23 @@ where
 }
 
 #[stable(feature = "fused", since = "1.26.0")]
-impl<I, P> FusedIterator for TakeWhile<I, P>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I, P> const FusedIterator for TakeWhile<I, P>
 where
-    I: FusedIterator,
-    P: FnMut(&I::Item) -> bool,
+    I: [const] FusedIterator,
+    P: [const] FnMut(&I::Item) -> bool,
 {
 }
 
 #[unstable(issue = "none", feature = "trusted_fused")]
-unsafe impl<I: TrustedFused, P> TrustedFused for TakeWhile<I, P> {}
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I: [const] TrustedFused, P> const TrustedFused for TakeWhile<I, P> {}
 
 #[unstable(issue = "none", feature = "inplace_iteration")]
-unsafe impl<P, I> SourceIter for TakeWhile<I, P>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<P, I> const SourceIter for TakeWhile<I, P>
 where
-    I: SourceIter,
+    I: [const] SourceIter,
 {
     type Source = I::Source;
 
@@ -125,7 +131,8 @@ where
 }
 
 #[unstable(issue = "none", feature = "inplace_iteration")]
-unsafe impl<I: InPlaceIterable, F> InPlaceIterable for TakeWhile<I, F> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I: [const] InPlaceIterable, F> const InPlaceIterable for TakeWhile<I, F> {
     const EXPAND_BY: Option<NonZero<usize>> = I::EXPAND_BY;
     const MERGE_BY: Option<NonZero<usize>> = I::MERGE_BY;
 }

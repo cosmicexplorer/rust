@@ -4,7 +4,8 @@ use crate::iter::TrustedLen;
 ///
 /// It currently requires `TrustedLen` because it's unclear whether it's
 /// reasonably possible to depend on the `size_hint` of anything else.
-pub(crate) trait UncheckedIterator: TrustedLen {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+pub(crate) const trait UncheckedIterator: [const] TrustedLen {
     /// Gets the next item from a non-empty iterator.
     ///
     /// Because there's always a value to return, that means it can return

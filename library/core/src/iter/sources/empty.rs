@@ -1,4 +1,5 @@
 use crate::iter::{FusedIterator, TrustedLen};
+use crate::marker::Destruct;
 use crate::{fmt, marker};
 
 /// Creates an iterator that yields nothing.
@@ -37,7 +38,11 @@ impl<T> fmt::Debug for Empty<T> {
 }
 
 #[stable(feature = "iter_empty", since = "1.2.0")]
-impl<T> Iterator for Empty<T> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<T> const Iterator for Empty<T>
+where
+    T: [const] Destruct,
+{
     type Item = T;
 
     fn next(&mut self) -> Option<T> {

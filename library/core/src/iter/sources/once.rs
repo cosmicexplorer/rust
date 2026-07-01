@@ -1,4 +1,5 @@
 use crate::iter::{FusedIterator, TrustedLen};
+use crate::marker::Destruct;
 
 /// Creates an iterator that yields an element exactly once.
 ///

@@ -3,6 +3,7 @@ use crate::fmt::{self, Debug};
 use crate::iter::{
     FusedIterator, InPlaceIterable, SourceIter, TrustedFused, TrustedLen, UncheckedIterator,
 };
+use crate::marker::Destruct;
 use crate::num::NonZero;
 
 /// An iterator that iterates two other iterators simultaneously.
@@ -20,10 +21,16 @@ pub struct Zip<A, B> {
     len: usize,
 }
 impl<A: Iterator, B: Iterator> Zip<A, B> {
-    pub(in crate::iter) fn new(a: A, b: B) -> Zip<A, B> {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub(in crate::iter) const fn new(a: A, b: B) -> Zip<A, B> {
         ZipImpl::new(a, b)
     }
-    fn super_nth(&mut self, mut n: usize) -> Option<(A::Item, B::Item)> {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    const fn super_nth(&mut self, mut n: usize) -> Option<(A::Item, B::Item)>
+    where
+        A: [const] Iterator,
+        B: [const] Iterator,
+    {
         while let Some(x) = Iterator::next(self) {
             if n == 0 {
                 return Some(x);
@@ -64,19 +71,21 @@ impl<A: Iterator, B: Iterator> Zip<A, B> {
 /// assert!(iter.next().is_none());
 /// ```
 #[stable(feature = "iter_zip", since = "1.59.0")]
-pub fn zip<A, B>(a: A, b: B) -> Zip<A::IntoIter, B::IntoIter>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+pub const fn zip<A, B>(a: A, b: B) -> Zip<A::IntoIter, B::IntoIter>
 where
-    A: IntoIterator,
-    B: IntoIterator,
+    A: [const] IntoIterator,
+    B: [const] IntoIterator,
 {
     ZipImpl::new(a.into_iter(), b.into_iter())
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<A, B> Iterator for Zip<A, B>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<A, B> const Iterator for Zip<A, B>
 where
-    A: Iterator,
-    B: Iterator,
+    A: [const] Iterator,
+    B: [const] Iterator,
 {
     type Item = (A::Item, B::Item);
 
@@ -98,7 +107,7 @@ where
     #[inline]
     fn fold<Acc, F>(self, init: Acc, f: F) -> Acc
     where
-        F: FnMut(Acc, Self::Item) -> Acc,
+        F: [const] Destruct + [const] FnMut(Acc, Self::Item) -> Acc,
     {
         ZipImpl::fold(self, init, f)
     }
@@ -106,7 +115,7 @@ where
     #[inline]
     unsafe fn __iterator_get_unchecked(&mut self, idx: usize) -> Self::Item
     where
-        Self: TrustedRandomAccessNoCoerce,
+        Self: [const] TrustedRandomAccessNoCoerce,
     {
         // SAFETY: `ZipImpl::__iterator_get_unchecked` has same safety
         // requirements as `Iterator::__iterator_get_unchecked`.
@@ -115,10 +124,11 @@ where
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<A, B> DoubleEndedIterator for Zip<A, B>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<A, B> const DoubleEndedIterator for Zip<A, B>
 where
-    A: DoubleEndedIterator + ExactSizeIterator,
-    B: DoubleEndedIterator + ExactSizeIterator,
+    A: [const] DoubleEndedIterator + [const] ExactSizeIterator,
+    B: [const] DoubleEndedIterator + [const] ExactSizeIterator,
 {
     #[inline]
     fn next_back(&mut self) -> Option<(A::Item, B::Item)> {
@@ -128,7 +138,8 @@ where
 
 // Zip specialization trait
 #[doc(hidden)]
-trait ZipImpl<A, B> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+const trait ZipImpl<A, B> {
     type Item;
     fn new(a: A, b: B) -> Self;
     fn next(&mut self) -> Option<Self::Item>;
@@ -136,15 +147,15 @@ trait ZipImpl<A, B> {
     fn nth(&mut self, n: usize) -> Option<Self::Item>;
     fn next_back(&mut self) -> Option<Self::Item>
     where
-        A: DoubleEndedIterator + ExactSizeIterator,
-        B: DoubleEndedIterator + ExactSizeIterator;
+        A: [const] DoubleEndedIterator + [const] ExactSizeIterator,
+        B: [const] DoubleEndedIterator + [const] ExactSizeIterator;
     fn fold<Acc, F>(self, init: Acc, f: F) -> Acc
     where
-        F: FnMut(Acc, Self::Item) -> Acc;
+        F: [const] Destruct + [const] FnMut(Acc, Self::Item) -> Acc;
     // This has the same safety requirements as `Iterator::__iterator_get_unchecked`
     unsafe fn get_unchecked(&mut self, idx: usize) -> <Self as Iterator>::Item
     where
-        Self: Iterator + TrustedRandomAccessNoCoerce;
+        Self: [const] Iterator + [const] TrustedRandomAccessNoCoerce;
 }
 
 // Work around limitations of specialization, requiring `default` impls to be repeated
@@ -175,8 +186,8 @@ macro_rules! zip_impl_general_defaults {
         #[inline]
         default fn next_back(&mut self) -> Option<(A::Item, B::Item)>
         where
-            A: DoubleEndedIterator + ExactSizeIterator,
-            B: DoubleEndedIterator + ExactSizeIterator,
+            A: [const] DoubleEndedIterator + [const] ExactSizeIterator,
+            B: [const] DoubleEndedIterator + [const] ExactSizeIterator,
         {
             // The function body below only uses `self.a/b.len()` and `self.a/b.next_back()`
             // and doesn’t call `next_back` too often, so this implementation is safe in
@@ -207,10 +218,11 @@ macro_rules! zip_impl_general_defaults {
 
 // General Zip impl
 #[doc(hidden)]
-impl<A, B> ZipImpl<A, B> for Zip<A, B>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<A, B> const ZipImpl<A, B> for Zip<A, B>
 where
-    A: Iterator,
-    B: Iterator,
+    A: [const] Iterator,
+    B: [const] Iterator,
 {
     type Item = (A::Item, B::Item);
 
@@ -235,7 +247,7 @@ where
 
     default unsafe fn get_unchecked(&mut self, _idx: usize) -> <Self as Iterator>::Item
     where
-        Self: TrustedRandomAccessNoCoerce,
+        Self: [const] TrustedRandomAccessNoCoerce,
     {
         unreachable!("Always specialized");
     }
@@ -243,17 +255,18 @@ where
     #[inline]
     default fn fold<Acc, F>(self, init: Acc, f: F) -> Acc
     where
-        F: FnMut(Acc, Self::Item) -> Acc,
+        F: [const] Destruct + [const] FnMut(Acc, Self::Item) -> Acc,
     {
         SpecFold::spec_fold(self, init, f)
     }
 }
 
 #[doc(hidden)]
-impl<A, B> ZipImpl<A, B> for Zip<A, B>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<A, B> const ZipImpl<A, B> for Zip<A, B>
 where
-    A: TrustedRandomAccessNoCoerce + Iterator,
-    B: TrustedRandomAccessNoCoerce + Iterator,
+    A: [const] TrustedRandomAccessNoCoerce + [const] Iterator,
+    B: [const] TrustedRandomAccessNoCoerce + [const] Iterator,
 {
     zip_impl_general_defaults! {}
 
@@ -274,12 +287,12 @@ where
     #[inline]
     fn fold<Acc, F>(mut self, init: Acc, mut f: F) -> Acc
     where
-        F: FnMut(Acc, Self::Item) -> Acc,
+        F: [const] Destruct + [const] FnMut(Acc, Self::Item) -> Acc,
     {
         let mut accum = init;
         let len = ZipImpl::size_hint(&self).0;
         for i in 0..len {
-            // SAFETY: since Self: TrustedRandomAccessNoCoerce we can trust the size-hint to
+            // SAFETY: since Self: [const] TrustedRandomAccessNoCoerce we can trust the size-hint to
             // calculate the length and then use that to do unchecked iteration.
             // fold consumes the iterator so we don't need to fixup any state.
             unsafe {
@@ -291,10 +304,11 @@ where
 }
 
 #[doc(hidden)]
-impl<A, B> ZipImpl<A, B> for Zip<A, B>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<A, B> const ZipImpl<A, B> for Zip<A, B>
 where
-    A: TrustedRandomAccess + Iterator,
-    B: TrustedRandomAccess + Iterator,
+    A: [const] TrustedRandomAccess + [const] Iterator,
+    B: [const] TrustedRandomAccess + [const] Iterator,
 {
     fn new(a: A, b: B) -> Self {
         let len = cmp::min(a.size(), b.size());
@@ -354,8 +368,8 @@ where
     #[inline]
     fn next_back(&mut self) -> Option<(A::Item, B::Item)>
     where
-        A: DoubleEndedIterator + ExactSizeIterator,
-        B: DoubleEndedIterator + ExactSizeIterator,
+        A: [const] DoubleEndedIterator + [const] ExactSizeIterator,
+        B: [const] DoubleEndedIterator + [const] ExactSizeIterator,
     {
         // No effects when the iterator is exhausted, to reduce the number of
         // cases the unsafe code has to handle.
@@ -406,69 +420,77 @@ where
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<A, B> ExactSizeIterator for Zip<A, B>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<A, B> const ExactSizeIterator for Zip<A, B>
 where
-    A: ExactSizeIterator,
-    B: ExactSizeIterator,
+    A: [const] ExactSizeIterator,
+    B: [const] ExactSizeIterator,
 {
 }
 
 #[doc(hidden)]
 #[unstable(feature = "trusted_random_access", issue = "none")]
-unsafe impl<A, B> TrustedRandomAccess for Zip<A, B>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<A, B> const TrustedRandomAccess for Zip<A, B>
 where
-    A: TrustedRandomAccess,
-    B: TrustedRandomAccess,
+    A: [const] TrustedRandomAccess,
+    B: [const] TrustedRandomAccess,
 {
 }
 
 #[doc(hidden)]
 #[unstable(feature = "trusted_random_access", issue = "none")]
-unsafe impl<A, B> TrustedRandomAccessNoCoerce for Zip<A, B>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<A, B> const TrustedRandomAccessNoCoerce for Zip<A, B>
 where
-    A: TrustedRandomAccessNoCoerce,
-    B: TrustedRandomAccessNoCoerce,
+    A: [const] TrustedRandomAccessNoCoerce,
+    B: [const] TrustedRandomAccessNoCoerce,
 {
     const MAY_HAVE_SIDE_EFFECT: bool = A::MAY_HAVE_SIDE_EFFECT || B::MAY_HAVE_SIDE_EFFECT;
 }
 
 #[stable(feature = "fused", since = "1.26.0")]
-impl<A, B> FusedIterator for Zip<A, B>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<A, B> const FusedIterator for Zip<A, B>
 where
-    A: FusedIterator,
-    B: FusedIterator,
+    A: [const] FusedIterator,
+    B: [const] FusedIterator,
 {
 }
 
 #[unstable(issue = "none", feature = "trusted_fused")]
-unsafe impl<A, B> TrustedFused for Zip<A, B>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<A, B> const TrustedFused for Zip<A, B>
 where
-    A: TrustedFused,
-    B: TrustedFused,
+    A: [const] TrustedFused,
+    B: [const] TrustedFused,
 {
 }
 
 #[unstable(feature = "trusted_len", issue = "37572")]
-unsafe impl<A, B> TrustedLen for Zip<A, B>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<A, B> const TrustedLen for Zip<A, B>
 where
-    A: TrustedLen,
-    B: TrustedLen,
+    A: [const] TrustedLen,
+    B: [const] TrustedLen,
 {
 }
 
-impl<A, B> UncheckedIterator for Zip<A, B>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<A, B> const UncheckedIterator for Zip<A, B>
 where
-    A: UncheckedIterator,
-    B: UncheckedIterator,
+    A: [const] UncheckedIterator,
+    B: [const] UncheckedIterator,
 {
 }
 
 // Arbitrarily selects the left side of the zip iteration as extractable "source"
 // it would require negative trait bounds to be able to try both
 #[unstable(issue = "none", feature = "inplace_iteration")]
-unsafe impl<A, B> SourceIter for Zip<A, B>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<A, B> const SourceIter for Zip<A, B>
 where
-    A: SourceIter,
+    A: [const] SourceIter,
 {
     type Source = A::Source;
 
@@ -481,7 +503,8 @@ where
 
 // Since SourceIter forwards the left hand side we do the same here
 #[unstable(issue = "none", feature = "inplace_iteration")]
-unsafe impl<A: InPlaceIterable, B> InPlaceIterable for Zip<A, B> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<A: [const] InPlaceIterable, B> const InPlaceIterable for Zip<A, B> {
     const EXPAND_BY: Option<NonZero<usize>> = A::EXPAND_BY;
     const MERGE_BY: Option<NonZero<usize>> = A::MERGE_BY;
 }
@@ -569,7 +592,11 @@ impl<A: Debug + TrustedRandomAccessNoCoerce, B: Debug + TrustedRandomAccessNoCoe
 #[doc(hidden)]
 #[unstable(feature = "trusted_random_access", issue = "none")]
 #[rustc_specialization_trait]
-pub unsafe trait TrustedRandomAccess: TrustedRandomAccessNoCoerce {}
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+pub const unsafe trait TrustedRandomAccess:
+    [const] TrustedRandomAccessNoCoerce
+{
+}
 
 /// Like [`TrustedRandomAccess`] but without any of the requirements / guarantees around
 /// coercions to supertypes after `__iterator_get_unchecked` (they aren’t allowed here!), and
@@ -582,11 +609,12 @@ pub unsafe trait TrustedRandomAccess: TrustedRandomAccessNoCoerce {}
 #[doc(hidden)]
 #[unstable(feature = "trusted_random_access", issue = "none")]
 #[rustc_specialization_trait]
-pub unsafe trait TrustedRandomAccessNoCoerce: Sized {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+pub const unsafe trait TrustedRandomAccessNoCoerce: Sized {
     // Convenience method.
     fn size(&self) -> usize
     where
-        Self: Iterator,
+        Self: [const] Iterator,
     {
         self.size_hint().0
     }
@@ -602,29 +630,38 @@ pub unsafe trait TrustedRandomAccessNoCoerce: Sized {
 ///
 /// Same requirements calling `get_unchecked` directly.
 #[doc(hidden)]
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
 #[inline]
-pub(in crate::iter::adapters) unsafe fn try_get_unchecked<I>(it: &mut I, idx: usize) -> I::Item
+pub(in crate::iter::adapters) const unsafe fn try_get_unchecked<I>(
+    it: &mut I,
+    idx: usize,
+) -> I::Item
 where
-    I: Iterator,
+    I: [const] Iterator,
 {
     // SAFETY: the caller must uphold the contract for
     // `Iterator::__iterator_get_unchecked`.
     unsafe { it.try_get_unchecked(idx) }
 }
 
-unsafe trait SpecTrustedRandomAccess: Iterator {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+const unsafe trait SpecTrustedRandomAccess: [const] Iterator {
     /// If `Self: TrustedRandomAccess`, it must be safe to call
     /// `Iterator::__iterator_get_unchecked(self, index)`.
     unsafe fn try_get_unchecked(&mut self, index: usize) -> Self::Item;
 }
 
-unsafe impl<I: Iterator> SpecTrustedRandomAccess for I {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I: [const] Iterator> const SpecTrustedRandomAccess for I {
     default unsafe fn try_get_unchecked(&mut self, _: usize) -> Self::Item {
         panic!("Should only be called on TrustedRandomAccess iterators");
     }
 }
 
-unsafe impl<I: Iterator + TrustedRandomAccessNoCoerce> SpecTrustedRandomAccess for I {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I: [const] Iterator + [const] TrustedRandomAccessNoCoerce> const SpecTrustedRandomAccess
+    for I
+{
     #[inline]
     unsafe fn try_get_unchecked(&mut self, index: usize) -> Self::Item {
         // SAFETY: the caller must uphold the contract for
@@ -633,19 +670,21 @@ unsafe impl<I: Iterator + TrustedRandomAccessNoCoerce> SpecTrustedRandomAccess f
     }
 }
 
-trait SpecFold: Iterator {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+const trait SpecFold: [const] Iterator {
     fn spec_fold<B, F>(self, init: B, f: F) -> B
     where
         Self: Sized,
-        F: FnMut(B, Self::Item) -> B;
+        F: [const] Destruct + [const] FnMut(B, Self::Item) -> B;
 }
 
-impl<A: Iterator, B: Iterator> SpecFold for Zip<A, B> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<A: [const] Iterator, B: [const] Iterator> const SpecFold for Zip<A, B> {
     // Adapted from default impl from the Iterator trait
     #[inline]
     default fn spec_fold<Acc, F>(mut self, init: Acc, mut f: F) -> Acc
     where
-        F: FnMut(Acc, Self::Item) -> Acc,
+        F: [const] Destruct + [const] FnMut(Acc, Self::Item) -> Acc,
     {
         let mut accum = init;
         while let Some(x) = ZipImpl::next(&mut self) {
@@ -655,11 +694,12 @@ impl<A: Iterator, B: Iterator> SpecFold for Zip<A, B> {
     }
 }
 
-impl<A: TrustedLen, B: TrustedLen> SpecFold for Zip<A, B> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<A: [const] TrustedLen, B: [const] TrustedLen> const SpecFold for Zip<A, B> {
     #[inline]
     fn spec_fold<Acc, F>(mut self, init: Acc, mut f: F) -> Acc
     where
-        F: FnMut(Acc, Self::Item) -> Acc,
+        F: [const] Destruct + [const] FnMut(Acc, Self::Item) -> Acc,
     {
         let mut accum = init;
         loop {

@@ -1,5 +1,6 @@
 use crate::fmt;
 use crate::iter::{FusedIterator, TrustedLen};
+use crate::marker::Destruct;
 
 /// Creates an iterator that lazily generates a value exactly once by invoking
 /// the provided closure.
@@ -58,12 +59,13 @@ use crate::iter::{FusedIterator, TrustedLen};
 /// ```
 #[inline]
 #[stable(feature = "iter_once_with", since = "1.43.0")]
-pub fn once_with<A, F: FnOnce() -> A>(make: F) -> OnceWith<F> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+pub const fn once_with<A, F: FnOnce() -> A>(make: F) -> OnceWith<F> {
     OnceWith { make: Some(make) }
 }
 
 /// An iterator that yields a single element of type `A` by
-/// applying the provided closure `F: FnOnce() -> A`.
+/// applying the provided closure `F: [const] Destruct + [const] FnOnce() -> A`.
 ///
 /// This `struct` is created by the [`once_with()`] function.
 /// See its documentation for more.
@@ -85,7 +87,8 @@ impl<F> fmt::Debug for OnceWith<F> {
 }
 
 #[stable(feature = "iter_once_with", since = "1.43.0")]
-impl<A, F: FnOnce() -> A> Iterator for OnceWith<F> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<A: [const] Destruct, F: [const] Destruct + [const] FnOnce() -> A> const Iterator for OnceWith<F> {
     type Item = A;
 
     #[inline]
@@ -101,21 +104,25 @@ impl<A, F: FnOnce() -> A> Iterator for OnceWith<F> {
 }
 
 #[stable(feature = "iter_once_with", since = "1.43.0")]
-impl<A, F: FnOnce() -> A> DoubleEndedIterator for OnceWith<F> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<A: [const] Destruct, F: [const] Destruct + [const] FnOnce() -> A> const DoubleEndedIterator for OnceWith<F> {
     fn next_back(&mut self) -> Option<A> {
         self.next()
     }
 }
 
 #[stable(feature = "iter_once_with", since = "1.43.0")]
-impl<A, F: FnOnce() -> A> ExactSizeIterator for OnceWith<F> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<A: [const] Destruct, F: [const] Destruct + [const] FnOnce() -> A> const ExactSizeIterator for OnceWith<F> {
     fn len(&self) -> usize {
         self.make.iter().len()
     }
 }
 
 #[stable(feature = "iter_once_with", since = "1.43.0")]
-impl<A, F: FnOnce() -> A> FusedIterator for OnceWith<F> {}
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<A: [const] Destruct, F: [const] Destruct + [const] FnOnce() -> A> const FusedIterator for OnceWith<F> {}
 
 #[stable(feature = "iter_once_with", since = "1.43.0")]
-unsafe impl<A, F: FnOnce() -> A> TrustedLen for OnceWith<F> {}
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<A: [const] Destruct, F: [const] Destruct + [const] FnOnce() -> A> const TrustedLen for OnceWith<F> {}

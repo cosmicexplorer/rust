@@ -44,7 +44,8 @@ const fn as_underlying(x: ControlFlow<bool>) -> u8 {
 
 /// Implements comparison of slices [lexicographically](Ord#lexicographical-comparison).
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<T: PartialOrd> PartialOrd for [T] {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<T: [const] PartialOrd + [const] SlicePartialOrd> const PartialOrd for [T] {
     #[inline]
     fn partial_cmp(&self, other: &[T]) -> Option<Ordering> {
         SlicePartialOrd::partial_compare(self, other)
@@ -181,7 +182,8 @@ const trait SliceChain: Sized {
 
 type AlwaysBreak<B> = ControlFlow<B, crate::convert::Infallible>;
 
-impl<A: PartialOrd> SlicePartialOrd for A {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<A: [const] PartialOrd> const SlicePartialOrd for A {
     default fn partial_compare(left: &[A], right: &[A]) -> Option<Ordering> {
         let elem_chain = |a, b| match PartialOrd::partial_cmp(a, b) {
             Some(Ordering::Equal) => ControlFlow::Continue(()),
@@ -193,7 +195,8 @@ impl<A: PartialOrd> SlicePartialOrd for A {
     }
 }
 
-impl<A: PartialOrd> SliceChain for A {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<A: [const] PartialOrd> const SliceChain for A {
     default fn chaining_lt(left: &[Self], right: &[Self]) -> ControlFlow<bool> {
         chaining_impl(left, right, PartialOrd::__chaining_lt, usize::__chaining_lt)
     }
@@ -208,12 +211,13 @@ impl<A: PartialOrd> SliceChain for A {
     }
 }
 
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
 #[inline]
-fn chaining_impl<'l, 'r, A: PartialOrd, B, C>(
+const fn chaining_impl<'l, 'r, A: [const] PartialOrd, B, C>(
     left: &'l [A],
     right: &'r [A],
-    elem_chain: impl Fn(&'l A, &'r A) -> ControlFlow<B>,
-    len_chain: impl for<'a> FnOnce(&'a usize, &'a usize) -> ControlFlow<B, C>,
+    elem_chain: impl [const] Fn(&'l A, &'r A) -> ControlFlow<B>,
+    len_chain: impl for<'a> [const] FnOnce(&'a usize, &'a usize) -> ControlFlow<B, C>,
 ) -> ControlFlow<B, C> {
     let l = cmp::min(left.len(), right.len());
 

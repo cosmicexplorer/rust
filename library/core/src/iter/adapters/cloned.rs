@@ -3,6 +3,7 @@ use core::num::NonZero;
 use crate::iter::adapters::zip::try_get_unchecked;
 use crate::iter::adapters::{SourceIter, TrustedRandomAccess, TrustedRandomAccessNoCoerce};
 use crate::iter::{FusedIterator, InPlaceIterable, TrustedLen, UncheckedIterator};
+use crate::marker::Destruct;
 use crate::ops::Try;
 
 /// An iterator that clones the elements of an underlying iterator.
@@ -20,20 +21,25 @@ pub struct Cloned<I> {
 }
 
 impl<I> Cloned<I> {
-    pub(in crate::iter) fn new(it: I) -> Cloned<I> {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub(in crate::iter) const fn new(it: I) -> Cloned<I> {
         Cloned { it }
     }
 }
 
-fn clone_try_fold<T: Clone, Acc, R>(mut f: impl FnMut(Acc, T) -> R) -> impl FnMut(Acc, &T) -> R {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+const fn clone_try_fold<T: [const] Clone, Acc, R>(
+    mut f: impl [const] FnMut(Acc, T) -> R,
+) -> impl [const] FnMut(Acc, &T) -> R {
     move |acc, elt| f(acc, elt.clone())
 }
 
 #[stable(feature = "iter_cloned", since = "1.1.0")]
-impl<'a, I, T: 'a> Iterator for Cloned<I>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<'a, I, T: 'a> const Iterator for Cloned<I>
 where
-    I: Iterator<Item = &'a T>,
-    T: Clone,
+    I: [const] Iterator<Item = &'a T>,
+    T: [const] Clone,
 {
     type Item = T;
 
@@ -48,22 +54,22 @@ where
     fn try_fold<B, F, R>(&mut self, init: B, f: F) -> R
     where
         Self: Sized,
-        F: FnMut(B, Self::Item) -> R,
-        R: Try<Output = B>,
+        F: [const] Destruct + [const] FnMut(B, Self::Item) -> R,
+        R: [const] Try<Output = B>,
     {
         self.it.try_fold(init, clone_try_fold(f))
     }
 
     fn fold<Acc, F>(self, init: Acc, f: F) -> Acc
     where
-        F: FnMut(Acc, Self::Item) -> Acc,
+        F: [const] Destruct + [const] FnMut(Acc, Self::Item) -> Acc,
     {
         self.it.map(T::clone).fold(init, f)
     }
 
     unsafe fn __iterator_get_unchecked(&mut self, idx: usize) -> T
     where
-        Self: TrustedRandomAccessNoCoerce,
+        Self: [const] TrustedRandomAccessNoCoerce,
     {
         // SAFETY: the caller must uphold the contract for
         // `Iterator::__iterator_get_unchecked`.
@@ -72,10 +78,11 @@ where
 }
 
 #[stable(feature = "iter_cloned", since = "1.1.0")]
-impl<'a, I, T: 'a> DoubleEndedIterator for Cloned<I>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<'a, I, T: 'a> const DoubleEndedIterator for Cloned<I>
 where
-    I: DoubleEndedIterator<Item = &'a T>,
-    T: Clone,
+    I: [const] DoubleEndedIterator<Item = &'a T>,
+    T: [const] Clone,
 {
     fn next_back(&mut self) -> Option<T> {
         self.it.next_back().cloned()
@@ -84,25 +91,26 @@ where
     fn try_rfold<B, F, R>(&mut self, init: B, f: F) -> R
     where
         Self: Sized,
-        F: FnMut(B, Self::Item) -> R,
-        R: Try<Output = B>,
+        F: [const] Destruct + [const] FnMut(B, Self::Item) -> R,
+        R: [const] Try<Output = B>,
     {
         self.it.try_rfold(init, clone_try_fold(f))
     }
 
     fn rfold<Acc, F>(self, init: Acc, f: F) -> Acc
     where
-        F: FnMut(Acc, Self::Item) -> Acc,
+        F: [const] Destruct + [const] FnMut(Acc, Self::Item) -> Acc,
     {
         self.it.map(T::clone).rfold(init, f)
     }
 }
 
 #[stable(feature = "iter_cloned", since = "1.1.0")]
-impl<'a, I, T: 'a> ExactSizeIterator for Cloned<I>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<'a, I, T: 'a> const ExactSizeIterator for Cloned<I>
 where
-    I: ExactSizeIterator<Item = &'a T>,
-    T: Clone,
+    I: [const] ExactSizeIterator<Item = &'a T>,
+    T: [const] Clone,
 {
     fn len(&self) -> usize {
         self.it.len()
@@ -114,38 +122,43 @@ where
 }
 
 #[stable(feature = "fused", since = "1.26.0")]
-impl<'a, I, T: 'a> FusedIterator for Cloned<I>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<'a, I, T: 'a> const FusedIterator for Cloned<I>
 where
-    I: FusedIterator<Item = &'a T>,
-    T: Clone,
+    I: [const] FusedIterator<Item = &'a T>,
+    T: [const] Clone,
 {
 }
 
 #[doc(hidden)]
 #[unstable(feature = "trusted_random_access", issue = "none")]
-unsafe impl<I> TrustedRandomAccess for Cloned<I> where I: TrustedRandomAccess {}
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I> const TrustedRandomAccess for Cloned<I> where I: [const] TrustedRandomAccess {}
 
 #[doc(hidden)]
 #[unstable(feature = "trusted_random_access", issue = "none")]
-unsafe impl<I> TrustedRandomAccessNoCoerce for Cloned<I>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I> const TrustedRandomAccessNoCoerce for Cloned<I>
 where
-    I: TrustedRandomAccessNoCoerce,
+    I: [const] TrustedRandomAccessNoCoerce,
 {
     const MAY_HAVE_SIDE_EFFECT: bool = true;
 }
 
 #[unstable(feature = "trusted_len", issue = "37572")]
-unsafe impl<'a, I, T: 'a> TrustedLen for Cloned<I>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<'a, I, T: 'a> const TrustedLen for Cloned<I>
 where
-    I: TrustedLen<Item = &'a T>,
-    T: Clone,
+    I: [const] TrustedLen<Item = &'a T>,
+    T: [const] Clone,
 {
 }
 
-impl<'a, I, T: 'a> UncheckedIterator for Cloned<I>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<'a, I, T: 'a> const UncheckedIterator for Cloned<I>
 where
-    I: UncheckedIterator<Item = &'a T>,
-    T: Clone,
+    I: [const] UncheckedIterator<Item = &'a T>,
+    T: [const] Clone,
 {
     unsafe fn next_unchecked(&mut self) -> T {
         // SAFETY: `Cloned` is 1:1 with the inner iterator, so if the caller promised
@@ -156,7 +169,8 @@ where
 }
 
 #[stable(feature = "default_iters", since = "1.70.0")]
-impl<I: Default> Default for Cloned<I> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I: [const] Default> const Default for Cloned<I> {
     /// Creates a `Cloned` iterator from the default value of `I`
     /// ```
     /// # use core::slice;
@@ -170,9 +184,10 @@ impl<I: Default> Default for Cloned<I> {
 }
 
 #[unstable(issue = "none", feature = "inplace_iteration")]
-unsafe impl<I> SourceIter for Cloned<I>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I> const SourceIter for Cloned<I>
 where
-    I: SourceIter,
+    I: [const] SourceIter,
 {
     type Source = I::Source;
 
@@ -184,7 +199,8 @@ where
 }
 
 #[unstable(issue = "none", feature = "inplace_iteration")]
-unsafe impl<I: InPlaceIterable> InPlaceIterable for Cloned<I> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I: [const] InPlaceIterable> const InPlaceIterable for Cloned<I> {
     const EXPAND_BY: Option<NonZero<usize>> = I::EXPAND_BY;
     const MERGE_BY: Option<NonZero<usize>> = I::MERGE_BY;
 }

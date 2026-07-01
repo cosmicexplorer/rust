@@ -1685,7 +1685,8 @@ impl<T: PointeeSized> fmt::Pointer for NonNull<T> {
 impl<T: PointeeSized> Eq for NonNull<T> {}
 
 #[stable(feature = "nonnull", since = "1.25.0")]
-impl<T: PointeeSized> PartialEq for NonNull<T> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<T: PointeeSized> const PartialEq for NonNull<T> {
     #[inline]
     #[allow(ambiguous_wide_pointer_comparisons)]
     fn eq(&self, other: &Self) -> bool {
@@ -1703,7 +1704,8 @@ impl<T: PointeeSized> Ord for NonNull<T> {
 }
 
 #[stable(feature = "nonnull", since = "1.25.0")]
-impl<T: PointeeSized> PartialOrd for NonNull<T> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<T: PointeeSized> const PartialOrd for NonNull<T> {
     #[inline]
     #[allow(ambiguous_wide_pointer_comparisons)]
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {

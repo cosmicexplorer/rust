@@ -3,6 +3,7 @@ use crate::iter::adapters::SourceIter;
 use crate::iter::{
     ByRefSized, FusedIterator, InPlaceIterable, TrustedFused, TrustedRandomAccessNoCoerce,
 };
+use crate::marker::Destruct;
 use crate::num::NonZero;
 use crate::ops::{ControlFlow, NeverShortCircuit, Try};
 
@@ -26,7 +27,8 @@ where
     I: Iterator,
 {
     #[track_caller]
-    pub(in crate::iter) fn new(iter: I) -> Self {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub(in crate::iter) const fn new(iter: I) -> Self {
         assert!(N != 0, "chunk size must be non-zero");
         Self { iter, remainder: None }
     }
@@ -46,7 +48,11 @@ where
     /// ```
     #[unstable(feature = "iter_array_chunks", reason = "recently added", issue = "100450")]
     #[inline]
-    pub fn into_remainder(mut self) -> array::IntoIter<I::Item, N> {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn into_remainder(mut self) -> array::IntoIter<I::Item, N>
+    where
+        Self: [const] Destruct,
+    {
         if self.remainder.is_none() {
             while let Some(_) = self.next() {}
         }
@@ -55,9 +61,10 @@ where
 }
 
 #[unstable(feature = "iter_array_chunks", reason = "recently added", issue = "100450")]
-impl<I, const N: usize> Iterator for ArrayChunks<I, N>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I, const N: usize> const Iterator for ArrayChunks<I, N>
 where
-    I: Iterator,
+    I: [const] Iterator,
 {
     type Item = [I::Item; N];
 
@@ -81,8 +88,8 @@ where
     fn try_fold<B, F, R>(&mut self, init: B, mut f: F) -> R
     where
         Self: Sized,
-        F: FnMut(B, Self::Item) -> R,
-        R: Try<Output = B>,
+        F: [const] Destruct + [const] FnMut(B, Self::Item) -> R,
+        R: [const] Try<Output = B>,
     {
         let mut acc = init;
         loop {
@@ -102,16 +109,17 @@ where
     fn fold<B, F>(self, init: B, f: F) -> B
     where
         Self: Sized,
-        F: FnMut(B, Self::Item) -> B,
+        F: [const] Destruct + [const] FnMut(B, Self::Item) -> B,
     {
         <Self as SpecFold>::fold(self, init, f)
     }
 }
 
 #[unstable(feature = "iter_array_chunks", reason = "recently added", issue = "100450")]
-impl<I, const N: usize> DoubleEndedIterator for ArrayChunks<I, N>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I, const N: usize> const DoubleEndedIterator for ArrayChunks<I, N>
 where
-    I: DoubleEndedIterator + ExactSizeIterator,
+    I: [const] DoubleEndedIterator + [const] ExactSizeIterator,
 {
     #[inline]
     fn next_back(&mut self) -> Option<Self::Item> {
@@ -121,8 +129,8 @@ where
     fn try_rfold<B, F, R>(&mut self, init: B, mut f: F) -> R
     where
         Self: Sized,
-        F: FnMut(B, Self::Item) -> R,
-        R: Try<Output = B>,
+        F: [const] Destruct + [const] FnMut(B, Self::Item) -> R,
+        R: [const] Try<Output = B>,
     {
         // We are iterating from the back we need to first handle the remainder.
         self.next_back_remainder();
@@ -151,7 +159,11 @@ where
     I: DoubleEndedIterator + ExactSizeIterator,
 {
     /// Updates `self.remainder` such that `self.iter.len` is divisible by `N`.
-    fn next_back_remainder(&mut self) {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    const fn next_back_remainder(&mut self)
+    where
+        I: [const] DoubleEndedIterator + [const] ExactSizeIterator,
+    {
         // Make sure to not override `self.remainder` with an empty array
         // when `next_back` is called after `ArrayChunks` exhaustion.
         if self.remainder.is_some() {
@@ -174,15 +186,21 @@ where
 }
 
 #[unstable(feature = "iter_array_chunks", reason = "recently added", issue = "100450")]
-impl<I, const N: usize> FusedIterator for ArrayChunks<I, N> where I: FusedIterator {}
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I, const N: usize> const FusedIterator for ArrayChunks<I, N> where I: [const] FusedIterator {}
 
 #[unstable(issue = "none", feature = "trusted_fused")]
-unsafe impl<I, const N: usize> TrustedFused for ArrayChunks<I, N> where I: TrustedFused + Iterator {}
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I, const N: usize> const TrustedFused for ArrayChunks<I, N> where
+    I: [const] TrustedFused + [const] Iterator
+{
+}
 
 #[unstable(feature = "iter_array_chunks", reason = "recently added", issue = "100450")]
-impl<I, const N: usize> ExactSizeIterator for ArrayChunks<I, N>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I, const N: usize> const ExactSizeIterator for ArrayChunks<I, N>
 where
-    I: ExactSizeIterator,
+    I: [const] ExactSizeIterator,
 {
     #[inline]
     fn len(&self) -> usize {
@@ -195,36 +213,39 @@ where
     }
 }
 
-trait SpecFold: Iterator {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+const trait SpecFold: [const] Iterator {
     fn fold<B, F>(self, init: B, f: F) -> B
     where
         Self: Sized,
-        F: FnMut(B, Self::Item) -> B;
+        F: [const] Destruct + [const] FnMut(B, Self::Item) -> B;
 }
 
-impl<I, const N: usize> SpecFold for ArrayChunks<I, N>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I, const N: usize> const SpecFold for ArrayChunks<I, N>
 where
-    I: Iterator,
+    I: [const] Iterator,
 {
     #[inline]
     default fn fold<B, F>(mut self, init: B, f: F) -> B
     where
         Self: Sized,
-        F: FnMut(B, Self::Item) -> B,
+        F: [const] Destruct + [const] FnMut(B, Self::Item) -> B,
     {
         self.try_fold(init, NeverShortCircuit::wrap_mut_2(f)).0
     }
 }
 
-impl<I, const N: usize> SpecFold for ArrayChunks<I, N>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I, const N: usize> const SpecFold for ArrayChunks<I, N>
 where
-    I: Iterator + TrustedRandomAccessNoCoerce,
+    I: [const] Iterator + [const] TrustedRandomAccessNoCoerce,
 {
     #[inline]
     fn fold<B, F>(mut self, init: B, mut f: F) -> B
     where
         Self: Sized,
-        F: FnMut(B, Self::Item) -> B,
+        F: [const] Destruct + [const] FnMut(B, Self::Item) -> B,
     {
         let mut accum = init;
         let inner_len = self.iter.size();
@@ -251,9 +272,10 @@ where
 }
 
 #[unstable(issue = "none", feature = "inplace_iteration")]
-unsafe impl<I, const N: usize> SourceIter for ArrayChunks<I, N>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I, const N: usize> const SourceIter for ArrayChunks<I, N>
 where
-    I: SourceIter + Iterator,
+    I: [const] SourceIter + [const] Iterator,
 {
     type Source = I::Source;
 
@@ -265,7 +287,10 @@ where
 }
 
 #[unstable(issue = "none", feature = "inplace_iteration")]
-unsafe impl<I: InPlaceIterable + Iterator, const N: usize> InPlaceIterable for ArrayChunks<I, N> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I: [const] InPlaceIterable + [const] Iterator, const N: usize> const InPlaceIterable
+    for ArrayChunks<I, N>
+{
     const EXPAND_BY: Option<NonZero<usize>> = I::EXPAND_BY;
     const MERGE_BY: Option<NonZero<usize>> = const {
         match (I::MERGE_BY, NonZero::new(N)) {

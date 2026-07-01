@@ -1,4 +1,5 @@
 use crate::iter::{FusedIterator, TrustedLen};
+use crate::marker::Destruct;
 use crate::num::NonZero;
 
 /// Creates a new iterator that endlessly repeats a single element.

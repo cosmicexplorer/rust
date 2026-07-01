@@ -86,7 +86,8 @@ impl<T, A: Allocator> IntoIter<T, A> {
     /// assert_eq!(into_iter.as_slice(), &['b', 'c']);
     /// ```
     #[stable(feature = "vec_into_iter_as_slice", since = "1.15.0")]
-    pub fn as_slice(&self) -> &[T] {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn as_slice(&self) -> &[T] {
         unsafe { slice::from_raw_parts(self.ptr.as_ptr(), self.len()) }
     }
 
@@ -104,18 +105,21 @@ impl<T, A: Allocator> IntoIter<T, A> {
     /// assert_eq!(into_iter.next().unwrap(), 'z');
     /// ```
     #[stable(feature = "vec_into_iter_as_slice", since = "1.15.0")]
-    pub fn as_mut_slice(&mut self) -> &mut [T] {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn as_mut_slice(&mut self) -> &mut [T] {
         unsafe { &mut *self.as_raw_mut_slice() }
     }
 
     /// Returns a reference to the underlying allocator.
     #[unstable(feature = "allocator_api", issue = "32838")]
     #[inline]
-    pub fn allocator(&self) -> &A {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn allocator(&self) -> &A {
         &self.alloc
     }
 
-    fn as_raw_mut_slice(&mut self) -> *mut [T] {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    const fn as_raw_mut_slice(&mut self) -> *mut [T] {
         ptr::slice_from_raw_parts_mut(self.ptr.as_ptr(), self.len())
     }
 
@@ -141,7 +145,8 @@ impl<T, A: Allocator> IntoIter<T, A> {
     /// This method is used by in-place iteration, refer to the vec::in_place_collect
     /// documentation for an overview.
     #[cfg(not(no_global_oom_handling))]
-    pub(super) fn forget_allocation_drop_remaining(&mut self) {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub(super) const fn forget_allocation_drop_remaining(&mut self) {
         let remaining = self.as_raw_mut_slice();
 
         // overwrite the individual fields instead of creating a new
@@ -160,7 +165,8 @@ impl<T, A: Allocator> IntoIter<T, A> {
     }
 
     /// Forgets to Drop the remaining elements while still allowing the backing allocation to be freed.
-    pub(crate) fn forget_remaining_elements(&mut self) {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub(crate) const fn forget_remaining_elements(&mut self) {
         // For the ZST case, it is crucial that we mutate `end` here, not `ptr`.
         // `ptr` must stay aligned, while `end` may be unaligned.
         self.end = self.ptr.as_ptr();
@@ -168,7 +174,8 @@ impl<T, A: Allocator> IntoIter<T, A> {
 
     #[cfg(not(no_global_oom_handling))]
     #[inline]
-    pub(crate) fn into_vecdeque(self) -> VecDeque<T, A> {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub(crate) const fn into_vecdeque(self) -> VecDeque<T, A> {
         // Keep our `Drop` impl from dropping the elements and the allocator
         let mut this = ManuallyDrop::new(self);
 
@@ -195,7 +202,8 @@ impl<T, A: Allocator> IntoIter<T, A> {
 }
 
 #[stable(feature = "vec_intoiter_as_ref", since = "1.46.0")]
-impl<T, A: Allocator> AsRef<[T]> for IntoIter<T, A> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<T, A: [const] Allocator> const AsRef<[T]> for IntoIter<T, A> {
     fn as_ref(&self) -> &[T] {
         self.as_slice()
     }
@@ -207,7 +215,8 @@ unsafe impl<T: Send, A: Allocator + Send> Send for IntoIter<T, A> {}
 unsafe impl<T: Sync, A: Allocator + Sync> Sync for IntoIter<T, A> {}
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<T, A: Allocator> Iterator for IntoIter<T, A> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<T, A: [const] Allocator> const Iterator for IntoIter<T, A> {
     type Item = T;
 
     #[inline]
@@ -308,7 +317,7 @@ impl<T, A: Allocator> Iterator for IntoIter<T, A> {
 
     fn fold<B, F>(mut self, mut accum: B, mut f: F) -> B
     where
-        F: FnMut(B, Self::Item) -> B,
+        F: [const] Destruct + [const] FnMut(B, Self::Item) -> B,
     {
         if T::IS_ZST {
             while self.ptr.as_ptr() != self.end.cast_mut() {
@@ -335,7 +344,7 @@ impl<T, A: Allocator> Iterator for IntoIter<T, A> {
     fn try_fold<B, F, R>(&mut self, mut accum: B, mut f: F) -> R
     where
         Self: Sized,
-        F: FnMut(B, Self::Item) -> R,
+        F: [const] Destruct + [const] FnMut(B, Self::Item) -> R,
         R: core::ops::Try<Output = B>,
     {
         if T::IS_ZST {
@@ -362,7 +371,7 @@ impl<T, A: Allocator> Iterator for IntoIter<T, A> {
 
     unsafe fn __iterator_get_unchecked(&mut self, i: usize) -> Self::Item
     where
-        Self: TrustedRandomAccessNoCoerce,
+        Self: [const] TrustedRandomAccessNoCoerce,
     {
         // SAFETY: the caller must guarantee that `i` is in bounds of the
         // `Vec<T>`, so `i` cannot overflow an `isize`, and the `self.ptr.add(i)`

@@ -1,4 +1,5 @@
 use super::TrustedLen;
+use crate::marker::Destruct;
 
 /// Conversion from an [`Iterator`].
 ///
@@ -131,7 +132,8 @@ use super::TrustedLen;
     label = "value of type `{Self}` cannot be built from `std::iter::Iterator<Item={A}>`"
 )]
 #[rustc_diagnostic_item = "FromIterator"]
-pub trait FromIterator<A>: Sized {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+pub const trait FromIterator<A>: Sized {
     /// Creates a value from an iterator.
     ///
     /// See the [module-level documentation] for more.
@@ -149,7 +151,7 @@ pub trait FromIterator<A>: Sized {
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     #[rustc_diagnostic_item = "from_iter_fn"]
-    fn from_iter<T: IntoIterator<Item = A>>(iter: T) -> Self;
+    fn from_iter<T: [const] IntoIterator<Item = A>>(iter: T) -> Self;
 }
 
 /// Conversion into an [`Iterator`].
@@ -279,14 +281,15 @@ pub trait FromIterator<A>: Sized {
 )]
 #[rustc_skip_during_method_dispatch(array, boxed_slice)]
 #[stable(feature = "rust1", since = "1.0.0")]
-pub trait IntoIterator {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+pub const trait IntoIterator {
     /// The type of the elements being iterated over.
     #[stable(feature = "rust1", since = "1.0.0")]
     type Item;
 
     /// Which kind of iterator are we turning this into?
     #[stable(feature = "rust1", since = "1.0.0")]
-    type IntoIter: Iterator<Item = Self::Item>;
+    type IntoIter: [const] Iterator<Item = Self::Item>;
 
     /// Creates an iterator from a value.
     ///
@@ -311,7 +314,8 @@ pub trait IntoIterator {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<I: Iterator> IntoIterator for I {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I: [const] Iterator> const IntoIterator for I {
     type Item = I::Item;
     type IntoIter = I;
 
@@ -391,7 +395,8 @@ impl<I: Iterator> IntoIterator for I {
 /// assert_eq!("MyCollection([5, 6, 7, 1, 2, 3])", format!("{c:?}"));
 /// ```
 #[stable(feature = "rust1", since = "1.0.0")]
-pub trait Extend<A> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+pub const trait Extend<A> where A: [const] Destruct {
     /// Extends a collection with the contents of an iterator.
     ///
     /// As this is the only required method for this trait, the [trait-level] docs
@@ -410,7 +415,7 @@ pub trait Extend<A> {
     /// assert_eq!("abcdef", &message);
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
-    fn extend<T: IntoIterator<Item = A>>(&mut self, iter: T);
+    fn extend<T: [const] IntoIterator<Item = A>>(&mut self, iter: T);
 
     /// Extends a collection with exactly one element.
     #[unstable(feature = "extend_one", issue = "72631")]
@@ -441,15 +446,16 @@ pub trait Extend<A> {
     #[doc(hidden)]
     unsafe fn extend_one_unchecked(&mut self, item: A)
     where
-        Self: Sized,
+        Self: Sized
     {
         self.extend_one(item);
     }
 }
 
 #[stable(feature = "extend_for_unit", since = "1.28.0")]
-impl Extend<()> for () {
-    fn extend<T: IntoIterator<Item = ()>>(&mut self, iter: T) {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl const Extend<()> for () {
+    fn extend<T: [const] IntoIterator<Item = ()>>(&mut self, iter: T) {
         iter.into_iter().for_each(drop)
     }
     fn extend_one(&mut self, _item: ()) {}
@@ -459,9 +465,10 @@ impl Extend<()> for () {
 /// 1- and 3- through 12-ary tuples were stabilized after 2-tuples, in 1.85.0.
 #[doc(fake_variadic)] // the other implementations are below.
 #[stable(feature = "extend_for_tuple", since = "1.56.0")]
-impl<T, ExtendT> Extend<(T,)> for (ExtendT,)
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<T, ExtendT> const Extend<(T,)> for (ExtendT,)
 where
-    ExtendT: Extend<T>,
+    ExtendT: [const] Extend<T>,
 {
     /// Allows to `extend` a tuple of collections that also implement `Extend`.
     ///
@@ -484,7 +491,7 @@ where
     /// assert_eq!(b, [2, 5, 8]);
     /// assert_eq!(c, [3, 6, 9]);
     /// ```
-    fn extend<I: IntoIterator<Item = (T,)>>(&mut self, iter: I) {
+    fn extend<I: [const] IntoIterator<Item = (T,)>>(&mut self, iter: I) {
         self.0.extend(iter.into_iter().map(|t| t.0));
     }
 
@@ -524,11 +531,12 @@ where
 /// ```
 #[doc(fake_variadic)] // the other implementations are below.
 #[stable(feature = "from_iterator_for_tuple", since = "1.79.0")]
-impl<T, ExtendT> FromIterator<(T,)> for (ExtendT,)
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<T, ExtendT> const FromIterator<(T,)> for (ExtendT,)
 where
-    ExtendT: Default + Extend<T>,
+    ExtendT: [const] Default + [const] Extend<T>,
 {
-    fn from_iter<Iter: IntoIterator<Item = (T,)>>(iter: Iter) -> Self {
+    fn from_iter<Iter: [const] IntoIterator<Item = (T,)>>(iter: Iter) -> Self {
         let mut res = ExtendT::default();
         res.extend(iter.into_iter().map(|t| t.0));
         (res,)
@@ -537,41 +545,42 @@ where
 
 /// An implementation of [`extend`](Extend::extend) that calls `extend_one` or
 /// `extend_one_unchecked` for each element of the iterator.
-fn default_extend<ExtendT, I, T>(collection: &mut ExtendT, iter: I)
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+const fn default_extend<ExtendT, I, T>(collection: &mut ExtendT, iter: I)
 where
-    ExtendT: Extend<T>,
-    I: IntoIterator<Item = T>,
+    ExtendT: [const] Extend<T>,
+    I: [const] IntoIterator<Item = T>,
 {
     // Specialize on `TrustedLen` and call `extend_one_unchecked` where
     // applicable.
-    trait SpecExtend<I> {
+    const trait SpecExtend<I> {
         fn extend(&mut self, iter: I);
     }
 
     // Extracting these to separate functions avoid monomorphising the closures
     // for every iterator type.
-    fn extender<ExtendT, T>(collection: &mut ExtendT) -> impl FnMut(T) + use<'_, ExtendT, T>
+    const fn extender<ExtendT, T>(collection: &mut ExtendT) -> impl [const] FnMut(T) + use<'_, ExtendT, T>
     where
-        ExtendT: Extend<T>,
+        ExtendT: [const] Extend<T>,
     {
         move |item| collection.extend_one(item)
     }
 
-    unsafe fn unchecked_extender<ExtendT, T>(
+    const unsafe fn unchecked_extender<ExtendT, T>(
         collection: &mut ExtendT,
-    ) -> impl FnMut(T) + use<'_, ExtendT, T>
+    ) -> impl [const] FnMut(T) + use<'_, ExtendT, T>
     where
-        ExtendT: Extend<T>,
+        ExtendT: [const] Extend<T>,
     {
         // SAFETY: we make sure that there is enough space at the callsite of
         // this function.
         move |item| unsafe { collection.extend_one_unchecked(item) }
     }
 
-    impl<ExtendT, I, T> SpecExtend<I> for ExtendT
+    impl<ExtendT, I, T> const SpecExtend<I> for ExtendT
     where
-        ExtendT: Extend<T>,
-        I: Iterator<Item = T>,
+        ExtendT: [const] Extend<T>,
+        I: [const] Iterator<Item = T>,
     {
         default fn extend(&mut self, iter: I) {
             let (lower_bound, _) = iter.size_hint();
@@ -583,10 +592,10 @@ where
         }
     }
 
-    impl<ExtendT, I, T> SpecExtend<I> for ExtendT
+    impl<ExtendT, I, T> const SpecExtend<I> for ExtendT
     where
-        ExtendT: Extend<T>,
-        I: TrustedLen<Item = T>,
+        ExtendT: [const] Extend<T>,
+        I: [const] TrustedLen<Item = T>,
     {
         fn extend(&mut self, iter: I) {
             let (lower_bound, upper_bound) = iter.size_hint();
@@ -613,11 +622,12 @@ macro_rules! impl_extend_tuple {
     ($(($ty:tt, $extend_ty:tt, $index:tt)),+) => {
         #[doc(hidden)]
         #[stable(feature = "extend_for_tuple", since = "1.56.0")]
-        impl<$($ty,)+ $($extend_ty,)+> Extend<($($ty,)+)> for ($($extend_ty,)+)
+        #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+        impl<$($ty,)+ $($extend_ty,)+> const Extend<($($ty,)+)> for ($($extend_ty,)+)
         where
-            $($extend_ty: Extend<$ty>,)+
+            $($extend_ty: [const] Extend<$ty>,)+
         {
-            fn extend<T: IntoIterator<Item = ($($ty,)+)>>(&mut self, iter: T) {
+            fn extend<T: [const] IntoIterator<Item = ($($ty,)+)>>(&mut self, iter: T) {
                 default_extend(self, iter)
             }
 
@@ -639,11 +649,12 @@ macro_rules! impl_extend_tuple {
 
         #[doc(hidden)]
         #[stable(feature = "from_iterator_for_tuple", since = "1.79.0")]
-        impl<$($ty,)+ $($extend_ty,)+> FromIterator<($($ty,)+)> for ($($extend_ty,)+)
+        #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+        impl<$($ty,)+ $($extend_ty,)+> const FromIterator<($($ty,)+)> for ($($extend_ty,)+)
         where
-            $($extend_ty: Default + Extend<$ty>,)+
+            $($extend_ty: [const] Default + [const] Extend<$ty>,)+
         {
-            fn from_iter<Iter: IntoIterator<Item = ($($ty,)+)>>(iter: Iter) -> Self {
+            fn from_iter<Iter: [const] IntoIterator<Item = ($($ty,)+)>>(iter: Iter) -> Self {
                 let mut res = Self::default();
                 res.extend(iter);
                 res

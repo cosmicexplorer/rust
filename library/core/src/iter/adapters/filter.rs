@@ -5,6 +5,7 @@ use core::ops::ControlFlow;
 use crate::fmt;
 use crate::iter::adapters::SourceIter;
 use crate::iter::{FusedIterator, InPlaceIterable, TrustedFused, TrustedLen};
+use crate::marker::Destruct;
 use crate::num::NonZero;
 use crate::ops::Try;
 
@@ -24,7 +25,8 @@ pub struct Filter<I, P> {
     predicate: P,
 }
 impl<I, P> Filter<I, P> {
-    pub(in crate::iter) fn new(iter: I, predicate: P) -> Filter<I, P> {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub(in crate::iter) const fn new(iter: I, predicate: P) -> Filter<I, P> {
         Filter { iter, predicate }
     }
 }
@@ -34,10 +36,14 @@ where
     I: Iterator,
     P: FnMut(&I::Item) -> bool,
 {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
     #[inline]
-    fn next_chunk_dropless<const N: usize>(
+    const fn next_chunk_dropless<const N: usize>(
         &mut self,
-    ) -> Result<[I::Item; N], array::IntoIter<I::Item, N>> {
+    ) -> Result<[I::Item; N], array::IntoIter<I::Item, N>>
+    where
+        P: [const] FnMut(&I::Item) -> bool,
+    {
         let mut array: [MaybeUninit<I::Item>; N] = [const { MaybeUninit::uninit() }; N];
         let mut initialized = 0;
 
@@ -72,24 +78,27 @@ impl<I: fmt::Debug, P> fmt::Debug for Filter<I, P> {
     }
 }
 
-fn filter_fold<T, Acc>(
-    mut predicate: impl FnMut(&T) -> bool,
-    mut fold: impl FnMut(Acc, T) -> Acc,
-) -> impl FnMut(Acc, T) -> Acc {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+const fn filter_fold<T, Acc>(
+    mut predicate: impl [const] FnMut(&T) -> bool,
+    mut fold: impl [const] FnMut(Acc, T) -> Acc,
+) -> impl [const] FnMut(Acc, T) -> Acc {
     move |acc, item| if predicate(&item) { fold(acc, item) } else { acc }
 }
 
-fn filter_try_fold<'a, T, Acc, R: Try<Output = Acc>>(
-    predicate: &'a mut impl FnMut(&T) -> bool,
-    mut fold: impl FnMut(Acc, T) -> R + 'a,
-) -> impl FnMut(Acc, T) -> R + 'a {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+const fn filter_try_fold<'a, T, Acc, R: [const] Try<Output = Acc>>(
+    predicate: &'a mut impl [const] FnMut(&T) -> bool,
+    mut fold: impl [const] FnMut(Acc, T) -> R + 'a,
+) -> impl [const] FnMut(Acc, T) -> R + 'a {
     move |acc, item| if predicate(&item) { fold(acc, item) } else { try { acc } }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<I: Iterator, P> Iterator for Filter<I, P>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I: [const] Iterator, P> const Iterator for Filter<I, P>
 where
-    P: FnMut(&I::Item) -> bool,
+    P: [const] FnMut(&I::Item) -> bool,
 {
     type Item = I::Item;
 
@@ -151,8 +160,8 @@ where
     fn try_fold<Acc, Fold, R>(&mut self, init: Acc, fold: Fold) -> R
     where
         Self: Sized,
-        Fold: FnMut(Acc, Self::Item) -> R,
-        R: Try<Output = Acc>,
+        Fold: [const] FnMut(Acc, Self::Item) -> R,
+        R: [const] Try<Output = Acc>,
     {
         self.iter.try_fold(init, filter_try_fold(&mut self.predicate, fold))
     }
@@ -160,16 +169,17 @@ where
     #[inline]
     fn fold<Acc, Fold>(self, init: Acc, fold: Fold) -> Acc
     where
-        Fold: FnMut(Acc, Self::Item) -> Acc,
+        Fold: [const] FnMut(Acc, Self::Item) -> Acc,
     {
         self.iter.fold(init, filter_fold(self.predicate, fold))
     }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<I: DoubleEndedIterator, P> DoubleEndedIterator for Filter<I, P>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I: [const] DoubleEndedIterator, P> const DoubleEndedIterator for Filter<I, P>
 where
-    P: FnMut(&I::Item) -> bool,
+    P: [const] FnMut(&I::Item) -> bool,
 {
     #[inline]
     fn next_back(&mut self) -> Option<I::Item> {
@@ -180,8 +190,8 @@ where
     fn try_rfold<Acc, Fold, R>(&mut self, init: Acc, fold: Fold) -> R
     where
         Self: Sized,
-        Fold: FnMut(Acc, Self::Item) -> R,
-        R: Try<Output = Acc>,
+        Fold: [const] FnMut(Acc, Self::Item) -> R,
+        R: [const] Try<Output = Acc>,
     {
         self.iter.try_rfold(init, filter_try_fold(&mut self.predicate, fold))
     }
@@ -189,22 +199,28 @@ where
     #[inline]
     fn rfold<Acc, Fold>(self, init: Acc, fold: Fold) -> Acc
     where
-        Fold: FnMut(Acc, Self::Item) -> Acc,
+        Fold: [const] FnMut(Acc, Self::Item) -> Acc,
     {
         self.iter.rfold(init, filter_fold(self.predicate, fold))
     }
 }
 
 #[stable(feature = "fused", since = "1.26.0")]
-impl<I: FusedIterator, P> FusedIterator for Filter<I, P> where P: FnMut(&I::Item) -> bool {}
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I: [const] FusedIterator, P> const FusedIterator for Filter<I, P> where
+    P: [const] FnMut(&I::Item) -> bool
+{
+}
 
 #[unstable(issue = "none", feature = "trusted_fused")]
-unsafe impl<I: TrustedFused, F> TrustedFused for Filter<I, F> {}
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I: [const] TrustedFused, F> const TrustedFused for Filter<I, F> {}
 
 #[unstable(issue = "none", feature = "inplace_iteration")]
-unsafe impl<P, I> SourceIter for Filter<I, P>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<P, I> const SourceIter for Filter<I, P>
 where
-    I: SourceIter,
+    I: [const] SourceIter,
 {
     type Source = I::Source;
 
@@ -216,12 +232,14 @@ where
 }
 
 #[unstable(issue = "none", feature = "inplace_iteration")]
-unsafe impl<I: InPlaceIterable, P> InPlaceIterable for Filter<I, P> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I: [const] InPlaceIterable, P> const InPlaceIterable for Filter<I, P> {
     const EXPAND_BY: Option<NonZero<usize>> = I::EXPAND_BY;
     const MERGE_BY: Option<NonZero<usize>> = I::MERGE_BY;
 }
 
-trait SpecAssumeCount {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+const trait SpecAssumeCount {
     /// # Safety
     ///
     /// `count` must be an number of items actually read from the iterator.
@@ -232,7 +250,8 @@ trait SpecAssumeCount {
     unsafe fn assume_count_le_upper_bound(count: usize, upper: usize);
 }
 
-impl<I: Iterator> SpecAssumeCount for I {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I: [const] Iterator> const SpecAssumeCount for I {
     #[inline]
     #[rustc_inherit_overflow_checks]
     default unsafe fn assume_count_le_upper_bound(count: usize, upper: usize) {
@@ -244,7 +263,8 @@ impl<I: Iterator> SpecAssumeCount for I {
     }
 }
 
-impl<I: TrustedLen> SpecAssumeCount for I {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I: [const] TrustedLen> const SpecAssumeCount for I {
     #[inline]
     unsafe fn assume_count_le_upper_bound(count: usize, upper: usize) {
         // SAFETY: The `upper` is trusted because it came from a `TrustedLen` iterator.

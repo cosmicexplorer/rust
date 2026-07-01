@@ -1,4 +1,5 @@
 use crate::iter::InPlaceIterable;
+use crate::marker::Destruct;
 use crate::num::NonZero;
 use crate::ops::{ChangeOutputType, ControlFlow, FromResidual, Residual, Try};
 
@@ -102,7 +103,8 @@ pub use self::{
 #[unstable(issue = "none", feature = "inplace_iteration")]
 #[doc(hidden)]
 #[rustc_specialization_trait]
-pub unsafe trait SourceIter {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+pub const unsafe trait SourceIter {
     /// A source stage in an iterator pipeline.
     type Source;
 
@@ -149,11 +151,14 @@ pub(crate) struct GenericShunt<'a, I, R> {
 /// Process the given iterator as if it yielded the item's `Try::Output`
 /// type instead. Any `Try::Residual`s encountered will stop the inner iterator
 /// and be propagated back to the overall result.
-pub(crate) fn try_process<I, T, R, F, U>(iter: I, mut f: F) -> ChangeOutputType<I::Item, U>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+pub(crate) const fn try_process<I, T, R, F, U>(iter: I, mut f: F) -> ChangeOutputType<I::Item, U>
 where
-    I: Iterator<Item: Try<Output = T, Residual = R>>,
-    for<'a> F: FnMut(GenericShunt<'a, I, R>) -> U,
-    R: Residual<U>,
+    I: [const] Iterator<Item: [const] Try<Output = T, Residual = R>>,
+    for<'a> F: [const] Destruct + [const] FnMut(GenericShunt<'a, I, R>) -> U,
+    F: [const] Destruct,
+    R: [const] Residual<U>,
+    U: [const] Destruct,
 {
     let mut residual = None;
     let shunt = GenericShunt { iter, residual: &mut residual };
@@ -164,9 +169,10 @@ where
     }
 }
 
-impl<I, R> Iterator for GenericShunt<'_, I, R>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I, R> const Iterator for GenericShunt<'_, I, R>
 where
-    I: Iterator<Item: Try<Residual = R>>,
+    I: [const] Iterator<Item: [const] Try<Residual = R>>,
 {
     type Item = <I::Item as Try>::Output;
 
@@ -185,8 +191,8 @@ where
 
     fn try_fold<B, F, T>(&mut self, init: B, mut f: F) -> T
     where
-        F: FnMut(B, Self::Item) -> T,
-        T: Try<Output = B>,
+        F: [const] Destruct + [const] FnMut(B, Self::Item) -> T,
+        T: [const] Try<Output = B>,
     {
         self.iter
             .try_fold(init, |acc, x| match Try::branch(x) {
@@ -203,9 +209,10 @@ where
 }
 
 #[unstable(issue = "none", feature = "inplace_iteration")]
-unsafe impl<I, R> SourceIter for GenericShunt<'_, I, R>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I, R> const SourceIter for GenericShunt<'_, I, R>
 where
-    I: SourceIter,
+    I: [const] SourceIter,
 {
     type Source = I::Source;
 
@@ -220,9 +227,10 @@ where
 // in order to return `Some(_)`. Since `iter` has type `I: InPlaceIterable` it's
 // guaranteed that at least one item will be moved out from the underlying source.
 #[unstable(issue = "none", feature = "inplace_iteration")]
-unsafe impl<I, R> InPlaceIterable for GenericShunt<'_, I, R>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I, R> const InPlaceIterable for GenericShunt<'_, I, R>
 where
-    I: InPlaceIterable,
+    I: [const] InPlaceIterable,
 {
     const EXPAND_BY: Option<NonZero<usize>> = I::EXPAND_BY;
     const MERGE_BY: Option<NonZero<usize>> = I::MERGE_BY;

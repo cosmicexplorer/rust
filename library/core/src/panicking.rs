@@ -229,14 +229,16 @@ pub const fn panic_nounwind(expr: &'static str) -> ! {
 #[cfg_attr(not(panic = "immediate-abort"), inline(never), cold)]
 #[cfg_attr(panic = "immediate-abort", inline)]
 #[rustc_nounwind]
-pub fn panic_nounwind_nobacktrace(expr: &'static str) -> ! {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+pub const fn panic_nounwind_nobacktrace(expr: &'static str) -> ! {
     panic_nounwind_fmt(fmt::Arguments::from_str(expr), /* force_no_backtrace */ true);
 }
 
 #[inline]
 #[track_caller]
 #[rustc_diagnostic_item = "unreachable_display"] // needed for `non-fmt-panics` lint
-pub fn unreachable_display<T: fmt::Display>(x: &T) -> ! {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+pub const fn unreachable_display<T: [const] fmt::Display>(x: &T) -> ! {
     panic_fmt(format_args!("internal error: entered unreachable code: {}", *x));
 }
 
@@ -263,7 +265,8 @@ pub const fn panic_display<T: fmt::Display>(x: &T) -> ! {
 #[cfg_attr(panic = "immediate-abort", inline)]
 #[track_caller]
 #[lang = "panic_bounds_check"] // needed by codegen for panic on OOB array/slice access
-fn panic_bounds_check(index: usize, len: usize) -> ! {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+const fn panic_bounds_check(index: usize, len: usize) -> ! {
     if cfg!(panic = "immediate-abort") {
         super::intrinsics::abort()
     }
@@ -276,7 +279,8 @@ fn panic_bounds_check(index: usize, len: usize) -> ! {
 #[track_caller]
 #[lang = "panic_misaligned_pointer_dereference"] // needed by codegen for panic on misaligned pointer deref
 #[rustc_nounwind] // `CheckAlignment` MIR pass requires this function to never unwind
-fn panic_misaligned_pointer_dereference(required: usize, found: usize) -> ! {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+const fn panic_misaligned_pointer_dereference(required: usize, found: usize) -> ! {
     if cfg!(panic = "immediate-abort") {
         super::intrinsics::abort()
     }
@@ -294,7 +298,8 @@ fn panic_misaligned_pointer_dereference(required: usize, found: usize) -> ! {
 #[track_caller]
 #[lang = "panic_null_pointer_dereference"] // needed by codegen for panic on null pointer deref
 #[rustc_nounwind] // `CheckNull` MIR pass requires this function to never unwind
-fn panic_null_pointer_dereference() -> ! {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+const fn panic_null_pointer_dereference() -> ! {
     if cfg!(panic = "immediate-abort") {
         super::intrinsics::abort()
     }
@@ -310,7 +315,8 @@ fn panic_null_pointer_dereference() -> ! {
 #[track_caller]
 #[lang = "panic_invalid_enum_construction"] // needed by codegen for panic on invalid enum construction.
 #[rustc_nounwind] // `CheckEnums` MIR pass requires this function to never unwind
-fn panic_invalid_enum_construction(source: u128) -> ! {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+const fn panic_invalid_enum_construction(source: u128) -> ! {
     if cfg!(panic = "immediate-abort") {
         super::intrinsics::abort()
     }
@@ -332,7 +338,8 @@ fn panic_invalid_enum_construction(source: u128) -> ! {
 #[cfg_attr(panic = "immediate-abort", inline)]
 #[lang = "panic_cannot_unwind"] // needed by codegen for panic in nounwind function
 #[rustc_nounwind]
-fn panic_cannot_unwind() -> ! {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+const fn panic_cannot_unwind() -> ! {
     // Keep the text in sync with `UnwindTerminateReason::as_str` in `rustc_middle`.
     panic_nounwind("panic in a function that cannot unwind")
 }
@@ -348,7 +355,8 @@ fn panic_cannot_unwind() -> ! {
 #[cfg_attr(panic = "immediate-abort", inline)]
 #[lang = "panic_in_cleanup"] // needed by codegen for panic in nounwind function
 #[rustc_nounwind]
-fn panic_in_cleanup() -> ! {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+const fn panic_in_cleanup() -> ! {
     // Keep the text in sync with `UnwindTerminateReason::as_str` in `rustc_middle`.
     panic_nounwind_nobacktrace("panic in a destructor during cleanup")
 }
@@ -381,15 +389,16 @@ pub enum AssertKind {
 #[cfg_attr(panic = "immediate-abort", inline)]
 #[track_caller]
 #[doc(hidden)]
-pub fn assert_failed<T, U>(
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+pub const fn assert_failed<T, U>(
     kind: AssertKind,
     left: &T,
     right: &U,
     args: Option<fmt::Arguments<'_>>,
 ) -> !
 where
-    T: fmt::Debug + ?Sized,
-    U: fmt::Debug + ?Sized,
+    T: [const] fmt::Debug + ?Sized,
+    U: [const] fmt::Debug + ?Sized,
 {
     assert_failed_inner(kind, &left, &right, args)
 }
@@ -399,14 +408,16 @@ where
 #[cfg_attr(panic = "immediate-abort", inline)]
 #[track_caller]
 #[doc(hidden)]
-pub fn assert_matches_failed<T: fmt::Debug + ?Sized>(
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+pub const fn assert_matches_failed<T: [const] fmt::Debug + ?Sized>(
     left: &T,
     right: &str,
     args: Option<fmt::Arguments<'_>>,
 ) -> ! {
     // The pattern is a string so it can be displayed directly.
     struct Pattern<'a>(&'a str);
-    impl fmt::Debug for Pattern<'_> {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    impl const fmt::Debug for Pattern<'_> {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             f.write_str(self.0)
         }
@@ -417,11 +428,12 @@ pub fn assert_matches_failed<T: fmt::Debug + ?Sized>(
 /// Non-generic version of the above functions, to avoid code bloat.
 #[cfg_attr(not(panic = "immediate-abort"), inline(never), cold, optimize(size))]
 #[cfg_attr(panic = "immediate-abort", inline)]
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
 #[track_caller]
-fn assert_failed_inner(
+const fn assert_failed_inner(
     kind: AssertKind,
-    left: &dyn fmt::Debug,
-    right: &dyn fmt::Debug,
+    left: &dyn [const] fmt::Debug,
+    right: &dyn [const] fmt::Debug,
     args: Option<fmt::Arguments<'_>>,
 ) -> ! {
     let op = match kind {

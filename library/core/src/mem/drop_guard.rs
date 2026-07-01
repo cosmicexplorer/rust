@@ -135,7 +135,7 @@ where
 #[rustc_const_unstable(feature = "const_drop_guard", issue = "none")]
 impl<T, F> const Drop for DropGuard<T, F>
 where
-    F: [const] FnOnce(T),
+    F: [const] Destruct + [const] FnOnce(T),
 {
     fn drop(&mut self) {
         // SAFETY: `DropGuard` is in the process of being dropped.

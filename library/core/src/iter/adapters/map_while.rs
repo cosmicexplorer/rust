@@ -1,6 +1,7 @@
 use crate::fmt;
 use crate::iter::InPlaceIterable;
 use crate::iter::adapters::SourceIter;
+use crate::marker::Destruct;
 use crate::num::NonZero;
 use crate::ops::{ControlFlow, Try};
 
@@ -20,7 +21,8 @@ pub struct MapWhile<I, P> {
 }
 
 impl<I, P> MapWhile<I, P> {
-    pub(in crate::iter) fn new(iter: I, predicate: P) -> MapWhile<I, P> {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub(in crate::iter) const fn new(iter: I, predicate: P) -> MapWhile<I, P> {
         MapWhile { iter, predicate }
     }
 }
@@ -33,9 +35,10 @@ impl<I: fmt::Debug, P> fmt::Debug for MapWhile<I, P> {
 }
 
 #[stable(feature = "iter_map_while", since = "1.57.0")]
-impl<B, I: Iterator, P> Iterator for MapWhile<I, P>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<B, I: [const] Iterator, P> const Iterator for MapWhile<I, P>
 where
-    P: FnMut(I::Item) -> Option<B>,
+    P: [const] FnMut(I::Item) -> Option<B>,
 {
     type Item = B;
 
@@ -55,8 +58,8 @@ where
     fn try_fold<Acc, Fold, R>(&mut self, init: Acc, mut fold: Fold) -> R
     where
         Self: Sized,
-        Fold: FnMut(Acc, Self::Item) -> R,
-        R: Try<Output = Acc>,
+        Fold: [const] FnMut(Acc, Self::Item) -> R,
+        R: [const] Try<Output = Acc>,
     {
         let Self { iter, predicate } = self;
         iter.try_fold(init, |acc, x| match predicate(x) {
@@ -70,9 +73,10 @@ where
 }
 
 #[unstable(issue = "none", feature = "inplace_iteration")]
-unsafe impl<I, P> SourceIter for MapWhile<I, P>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I, P> const SourceIter for MapWhile<I, P>
 where
-    I: SourceIter,
+    I: [const] SourceIter,
 {
     type Source = I::Source;
 
@@ -84,7 +88,8 @@ where
 }
 
 #[unstable(issue = "none", feature = "inplace_iteration")]
-unsafe impl<I: InPlaceIterable, P> InPlaceIterable for MapWhile<I, P> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I: [const] InPlaceIterable, P> const InPlaceIterable for MapWhile<I, P> {
     const EXPAND_BY: Option<NonZero<usize>> = I::EXPAND_BY;
     const MERGE_BY: Option<NonZero<usize>> = I::MERGE_BY;
 }

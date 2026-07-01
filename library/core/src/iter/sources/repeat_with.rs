@@ -1,9 +1,10 @@
 use crate::fmt;
 use crate::iter::{FusedIterator, TrustedLen};
 use crate::ops::Try;
+use crate::marker::Destruct;
 
 /// Creates a new iterator that repeats elements of type `A` endlessly by
-/// applying the provided closure, the repeater, `F: FnMut() -> A`.
+/// applying the provided closure, the repeater, `F: [const] Destruct + [const] FnMut() -> A`.
 ///
 /// The `repeat_with()` function calls the repeater over and over again.
 ///
@@ -62,12 +63,13 @@ use crate::ops::Try;
 /// ```
 #[inline]
 #[stable(feature = "iterator_repeat_with", since = "1.28.0")]
-pub fn repeat_with<A, F: FnMut() -> A>(repeater: F) -> RepeatWith<F> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+pub const fn repeat_with<A, F: FnMut() -> A>(repeater: F) -> RepeatWith<F> {
     RepeatWith { repeater }
 }
 
 /// An iterator that repeats elements of type `A` endlessly by
-/// applying the provided closure `F: FnMut() -> A`.
+/// applying the provided closure `F: [const] Destruct + [const] FnMut() -> A`.
 ///
 /// This `struct` is created by the [`repeat_with()`] function.
 /// See its documentation for more.
@@ -85,7 +87,8 @@ impl<F> fmt::Debug for RepeatWith<F> {
 }
 
 #[stable(feature = "iterator_repeat_with", since = "1.28.0")]
-impl<A, F: FnMut() -> A> Iterator for RepeatWith<F> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<A: [const] core::marker::Destruct, F: [const] Destruct + [const] FnMut() -> A> const Iterator for RepeatWith<F> {
     type Item = A;
 
     #[inline]
@@ -102,7 +105,7 @@ impl<A, F: FnMut() -> A> Iterator for RepeatWith<F> {
     fn try_fold<Acc, Fold, R>(&mut self, mut init: Acc, mut fold: Fold) -> R
     where
         Fold: FnMut(Acc, Self::Item) -> R,
-        R: Try<Output = Acc>,
+        R: [const] Try<Output = Acc>,
     {
         // This override isn't strictly needed, but avoids the need to optimize
         // away the `next`-always-returns-`Some` and emphasizes that the `?`
@@ -116,7 +119,15 @@ impl<A, F: FnMut() -> A> Iterator for RepeatWith<F> {
 }
 
 #[stable(feature = "iterator_repeat_with", since = "1.28.0")]
-impl<A, F: FnMut() -> A> FusedIterator for RepeatWith<F> {}
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<A: [const] core::marker::Destruct, F: [const] Destruct + [const] FnMut() -> A> const FusedIterator
+    for RepeatWith<F>
+{
+}
 
 #[unstable(feature = "trusted_len", issue = "37572")]
-unsafe impl<A, F: FnMut() -> A> TrustedLen for RepeatWith<F> {}
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<A: [const] core::marker::Destruct, F: [const] Destruct + [const] FnMut() -> A> const TrustedLen
+    for RepeatWith<F>
+{
+}

@@ -1,6 +1,7 @@
 use crate::iter::adapters::zip::try_get_unchecked;
 use crate::iter::adapters::{SourceIter, TrustedRandomAccess, TrustedRandomAccessNoCoerce};
 use crate::iter::{FusedIterator, InPlaceIterable, TrustedFused, TrustedLen};
+use crate::marker::Destruct;
 use crate::num::NonZero;
 use crate::ops::Try;
 
@@ -20,7 +21,8 @@ pub struct Enumerate<I> {
     count: usize,
 }
 impl<I> Enumerate<I> {
-    pub(in crate::iter) fn new(iter: I) -> Enumerate<I> {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub(in crate::iter) const fn new(iter: I) -> Enumerate<I> {
         Enumerate { iter, count: 0 }
     }
 
@@ -53,15 +55,17 @@ impl<I> Enumerate<I> {
     /// ```
     #[inline]
     #[unstable(feature = "next_index", issue = "130711")]
-    pub fn next_index(&self) -> usize {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn next_index(&self) -> usize {
         self.count
     }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<I> Iterator for Enumerate<I>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I> const Iterator for Enumerate<I>
 where
-    I: Iterator,
+    I: [const] Iterator,
 {
     type Item = (usize, <I as Iterator>::Item);
 
@@ -106,14 +110,14 @@ where
     fn try_fold<Acc, Fold, R>(&mut self, init: Acc, fold: Fold) -> R
     where
         Self: Sized,
-        Fold: FnMut(Acc, Self::Item) -> R,
-        R: Try<Output = Acc>,
+        Fold: [const] FnMut(Acc, Self::Item) -> R,
+        R: [const] Try<Output = Acc>,
     {
         #[inline]
-        fn enumerate<'a, T, Acc, R>(
+        const fn enumerate<'a, T, Acc, R>(
             count: &'a mut usize,
-            mut fold: impl FnMut(Acc, (usize, T)) -> R + 'a,
-        ) -> impl FnMut(Acc, T) -> R + 'a {
+            mut fold: impl [const] FnMut(Acc, (usize, T)) -> R + 'a,
+        ) -> impl [const] FnMut(Acc, T) -> R + 'a {
             #[rustc_inherit_overflow_checks]
             move |acc, item| {
                 let acc = fold(acc, (*count, item));
@@ -128,13 +132,13 @@ where
     #[inline]
     fn fold<Acc, Fold>(self, init: Acc, fold: Fold) -> Acc
     where
-        Fold: FnMut(Acc, Self::Item) -> Acc,
+        Fold: [const] FnMut(Acc, Self::Item) -> Acc,
     {
         #[inline]
-        fn enumerate<T, Acc>(
+        const fn enumerate<T, Acc>(
             mut count: usize,
-            mut fold: impl FnMut(Acc, (usize, T)) -> Acc,
-        ) -> impl FnMut(Acc, T) -> Acc {
+            mut fold: impl [const] FnMut(Acc, (usize, T)) -> Acc,
+        ) -> impl [const] FnMut(Acc, T) -> Acc {
             #[rustc_inherit_overflow_checks]
             move |acc, item| {
                 let acc = fold(acc, (count, item));
@@ -162,7 +166,7 @@ where
     #[inline]
     unsafe fn __iterator_get_unchecked(&mut self, idx: usize) -> <Self as Iterator>::Item
     where
-        Self: TrustedRandomAccessNoCoerce,
+        Self: [const] TrustedRandomAccessNoCoerce,
     {
         // SAFETY: the caller must uphold the contract for
         // `Iterator::__iterator_get_unchecked`.
@@ -172,9 +176,10 @@ where
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<I> DoubleEndedIterator for Enumerate<I>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I> const DoubleEndedIterator for Enumerate<I>
 where
-    I: ExactSizeIterator + DoubleEndedIterator,
+    I: [const] ExactSizeIterator + [const] DoubleEndedIterator,
 {
     #[inline]
     fn next_back(&mut self) -> Option<(usize, <I as Iterator>::Item)> {
@@ -198,15 +203,15 @@ where
     fn try_rfold<Acc, Fold, R>(&mut self, init: Acc, fold: Fold) -> R
     where
         Self: Sized,
-        Fold: FnMut(Acc, Self::Item) -> R,
-        R: Try<Output = Acc>,
+        Fold: [const] FnMut(Acc, Self::Item) -> R,
+        R: [const] Try<Output = Acc>,
     {
         // Can safely add and subtract the count, as `ExactSizeIterator` promises
         // that the number of elements fits into a `usize`.
-        fn enumerate<T, Acc, R>(
+        const fn enumerate<T, Acc, R>(
             mut count: usize,
-            mut fold: impl FnMut(Acc, (usize, T)) -> R,
-        ) -> impl FnMut(Acc, T) -> R {
+            mut fold: impl [const] FnMut(Acc, (usize, T)) -> R,
+        ) -> impl [const] FnMut(Acc, T) -> R {
             move |acc, item| {
                 count -= 1;
                 fold(acc, (count, item))
@@ -220,14 +225,14 @@ where
     #[inline]
     fn rfold<Acc, Fold>(self, init: Acc, fold: Fold) -> Acc
     where
-        Fold: FnMut(Acc, Self::Item) -> Acc,
+        Fold: [const] FnMut(Acc, Self::Item) -> Acc,
     {
         // Can safely add and subtract the count, as `ExactSizeIterator` promises
         // that the number of elements fits into a `usize`.
-        fn enumerate<T, Acc>(
+        const fn enumerate<T, Acc>(
             mut count: usize,
-            mut fold: impl FnMut(Acc, (usize, T)) -> Acc,
-        ) -> impl FnMut(Acc, T) -> Acc {
+            mut fold: impl [const] FnMut(Acc, (usize, T)) -> Acc,
+        ) -> impl [const] FnMut(Acc, T) -> Acc {
             move |acc, item| {
                 count -= 1;
                 fold(acc, (count, item))
@@ -247,9 +252,10 @@ where
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<I> ExactSizeIterator for Enumerate<I>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I> const ExactSizeIterator for Enumerate<I>
 where
-    I: ExactSizeIterator,
+    I: [const] ExactSizeIterator,
 {
     fn len(&self) -> usize {
         self.iter.len()
@@ -262,30 +268,36 @@ where
 
 #[doc(hidden)]
 #[unstable(feature = "trusted_random_access", issue = "none")]
-unsafe impl<I> TrustedRandomAccess for Enumerate<I> where I: TrustedRandomAccess {}
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I> const TrustedRandomAccess for Enumerate<I> where I: [const] TrustedRandomAccess {}
 
 #[doc(hidden)]
 #[unstable(feature = "trusted_random_access", issue = "none")]
-unsafe impl<I> TrustedRandomAccessNoCoerce for Enumerate<I>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I> const TrustedRandomAccessNoCoerce for Enumerate<I>
 where
-    I: TrustedRandomAccessNoCoerce,
+    I: [const] TrustedRandomAccessNoCoerce,
 {
     const MAY_HAVE_SIDE_EFFECT: bool = I::MAY_HAVE_SIDE_EFFECT;
 }
 
 #[stable(feature = "fused", since = "1.26.0")]
-impl<I> FusedIterator for Enumerate<I> where I: FusedIterator {}
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I> const FusedIterator for Enumerate<I> where I: [const] FusedIterator {}
 
 #[unstable(issue = "none", feature = "trusted_fused")]
-unsafe impl<I: TrustedFused> TrustedFused for Enumerate<I> {}
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I: [const] TrustedFused> const TrustedFused for Enumerate<I> {}
 
 #[unstable(feature = "trusted_len", issue = "37572")]
-unsafe impl<I> TrustedLen for Enumerate<I> where I: TrustedLen {}
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I> const TrustedLen for Enumerate<I> where I: [const] TrustedLen {}
 
 #[unstable(issue = "none", feature = "inplace_iteration")]
-unsafe impl<I> SourceIter for Enumerate<I>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I> const SourceIter for Enumerate<I>
 where
-    I: SourceIter,
+    I: [const] SourceIter,
 {
     type Source = I::Source;
 
@@ -297,13 +309,15 @@ where
 }
 
 #[unstable(issue = "none", feature = "inplace_iteration")]
-unsafe impl<I: InPlaceIterable> InPlaceIterable for Enumerate<I> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I: [const] InPlaceIterable> const InPlaceIterable for Enumerate<I> {
     const EXPAND_BY: Option<NonZero<usize>> = I::EXPAND_BY;
     const MERGE_BY: Option<NonZero<usize>> = I::MERGE_BY;
 }
 
 #[stable(feature = "default_iters", since = "1.70.0")]
-impl<I: Default> Default for Enumerate<I> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I: [const] Default> const Default for Enumerate<I> {
     /// Creates an `Enumerate` iterator from the default value of `I`
     /// ```
     /// # use core::slice;

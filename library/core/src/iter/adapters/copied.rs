@@ -1,6 +1,7 @@
 use crate::iter::adapters::zip::try_get_unchecked;
 use crate::iter::adapters::{SourceIter, TrustedRandomAccess, TrustedRandomAccessNoCoerce};
 use crate::iter::{FusedIterator, InPlaceIterable, TrustedLen};
+use crate::marker::Destruct;
 use crate::mem::{MaybeUninit, SizedTypeProperties};
 use crate::num::NonZero;
 use crate::ops::Try;
@@ -21,29 +22,41 @@ pub struct Copied<I> {
 }
 
 impl<I> Copied<I> {
-    pub(in crate::iter) fn new(it: I) -> Copied<I> {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub(in crate::iter) const fn new(it: I) -> Copied<I> {
         Copied { it }
     }
 
     #[doc(hidden)]
     #[unstable(feature = "copied_into_inner", issue = "none")]
-    pub fn into_inner(self) -> I {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn into_inner(self) -> I
+    where
+        Self: [const] Destruct,
+    {
         self.it
     }
 }
 
-fn copy_fold<T: Copy, Acc>(mut f: impl FnMut(Acc, T) -> Acc) -> impl FnMut(Acc, &T) -> Acc {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+const fn copy_fold<T: Copy, Acc>(
+    mut f: impl [const] FnMut(Acc, T) -> Acc,
+) -> impl [const] FnMut(Acc, &T) -> Acc {
     move |acc, &elt| f(acc, elt)
 }
 
-fn copy_try_fold<T: Copy, Acc, R>(mut f: impl FnMut(Acc, T) -> R) -> impl FnMut(Acc, &T) -> R {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+const fn copy_try_fold<T: Copy, Acc, R>(
+    mut f: impl [const] FnMut(Acc, T) -> R,
+) -> impl [const] FnMut(Acc, &T) -> R {
     move |acc, &elt| f(acc, elt)
 }
 
 #[stable(feature = "iter_copied", since = "1.36.0")]
-impl<'a, I, T: 'a> Iterator for Copied<I>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<'a, I, T: 'a> const Iterator for Copied<I>
 where
-    I: Iterator<Item = &'a T>,
+    I: [const] Iterator<Item = &'a T>,
     T: Copy,
 {
     type Item = T;
@@ -68,15 +81,15 @@ where
     fn try_fold<B, F, R>(&mut self, init: B, f: F) -> R
     where
         Self: Sized,
-        F: FnMut(B, Self::Item) -> R,
-        R: Try<Output = B>,
+        F: [const] Destruct + [const] FnMut(B, Self::Item) -> R,
+        R: [const] Try<Output = B>,
     {
         self.it.try_fold(init, copy_try_fold(f))
     }
 
     fn fold<Acc, F>(self, init: Acc, f: F) -> Acc
     where
-        F: FnMut(Acc, Self::Item) -> Acc,
+        F: [const] Destruct + [const] FnMut(Acc, Self::Item) -> Acc,
     {
         self.it.fold(init, copy_fold(f))
     }
@@ -100,7 +113,7 @@ where
 
     unsafe fn __iterator_get_unchecked(&mut self, idx: usize) -> T
     where
-        Self: TrustedRandomAccessNoCoerce,
+        Self: [const] TrustedRandomAccessNoCoerce,
     {
         // SAFETY: the caller must uphold the contract for
         // `Iterator::__iterator_get_unchecked`.
@@ -109,9 +122,10 @@ where
 }
 
 #[stable(feature = "iter_copied", since = "1.36.0")]
-impl<'a, I, T: 'a> DoubleEndedIterator for Copied<I>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<'a, I, T: 'a> const DoubleEndedIterator for Copied<I>
 where
-    I: DoubleEndedIterator<Item = &'a T>,
+    I: [const] DoubleEndedIterator<Item = &'a T>,
     T: Copy,
 {
     fn next_back(&mut self) -> Option<T> {
@@ -121,15 +135,15 @@ where
     fn try_rfold<B, F, R>(&mut self, init: B, f: F) -> R
     where
         Self: Sized,
-        F: FnMut(B, Self::Item) -> R,
-        R: Try<Output = B>,
+        F: [const] Destruct + [const] FnMut(B, Self::Item) -> R,
+        R: [const] Try<Output = B>,
     {
         self.it.try_rfold(init, copy_try_fold(f))
     }
 
     fn rfold<Acc, F>(self, init: Acc, f: F) -> Acc
     where
-        F: FnMut(Acc, Self::Item) -> Acc,
+        F: [const] Destruct + [const] FnMut(Acc, Self::Item) -> Acc,
     {
         self.it.rfold(init, copy_fold(f))
     }
@@ -141,9 +155,10 @@ where
 }
 
 #[stable(feature = "iter_copied", since = "1.36.0")]
-impl<'a, I, T: 'a> ExactSizeIterator for Copied<I>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<'a, I, T: 'a> const ExactSizeIterator for Copied<I>
 where
-    I: ExactSizeIterator<Item = &'a T>,
+    I: [const] ExactSizeIterator<Item = &'a T>,
     T: Copy,
 {
     fn len(&self) -> usize {
@@ -156,44 +171,50 @@ where
 }
 
 #[stable(feature = "iter_copied", since = "1.36.0")]
-impl<'a, I, T: 'a> FusedIterator for Copied<I>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<'a, I, T: 'a> const FusedIterator for Copied<I>
 where
-    I: FusedIterator<Item = &'a T>,
+    I: [const] FusedIterator<Item = &'a T>,
     T: Copy,
 {
 }
 
 #[doc(hidden)]
 #[unstable(feature = "trusted_random_access", issue = "none")]
-unsafe impl<I> TrustedRandomAccess for Copied<I> where I: TrustedRandomAccess {}
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I> const TrustedRandomAccess for Copied<I> where I: [const] TrustedRandomAccess {}
 
 #[doc(hidden)]
 #[unstable(feature = "trusted_random_access", issue = "none")]
-unsafe impl<I> TrustedRandomAccessNoCoerce for Copied<I>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I> const TrustedRandomAccessNoCoerce for Copied<I>
 where
-    I: TrustedRandomAccessNoCoerce,
+    I: [const] TrustedRandomAccessNoCoerce,
 {
     const MAY_HAVE_SIDE_EFFECT: bool = I::MAY_HAVE_SIDE_EFFECT;
 }
 
 #[stable(feature = "iter_copied", since = "1.36.0")]
-unsafe impl<'a, I, T: 'a> TrustedLen for Copied<I>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<'a, I, T: 'a> const TrustedLen for Copied<I>
 where
-    I: TrustedLen<Item = &'a T>,
+    I: [const] TrustedLen<Item = &'a T>,
     T: Copy,
 {
 }
 
-trait SpecNextChunk<'a, const N: usize, T: 'a>: Iterator<Item = &'a T>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+const trait SpecNextChunk<'a, const N: usize, T: 'a>: [const] Iterator<Item = &'a T>
 where
     T: Copy,
 {
     fn spec_next_chunk(&mut self) -> Result<[T; N], array::IntoIter<T, N>>;
 }
 
-impl<'a, const N: usize, I, T: 'a> SpecNextChunk<'a, N, T> for I
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<'a, const N: usize, I, T: 'a> const SpecNextChunk<'a, N, T> for I
 where
-    I: Iterator<Item = &'a T>,
+    I: [const] Iterator<Item = &'a T>,
     T: Copy,
 {
     default fn spec_next_chunk(&mut self) -> Result<[T; N], array::IntoIter<T, N>> {
@@ -201,7 +222,8 @@ where
     }
 }
 
-impl<'a, const N: usize, T: 'a> SpecNextChunk<'a, N, T> for crate::slice::Iter<'a, T>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<'a, const N: usize, T: 'a> const SpecNextChunk<'a, N, T> for crate::slice::Iter<'a, T>
 where
     T: Copy,
 {
@@ -247,7 +269,8 @@ where
 }
 
 #[stable(feature = "default_iters", since = "1.70.0")]
-impl<I: Default> Default for Copied<I> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I: [const] Default> const Default for Copied<I> {
     /// Creates a `Copied` iterator from the default value of `I`
     /// ```
     /// # use core::slice;
@@ -261,9 +284,10 @@ impl<I: Default> Default for Copied<I> {
 }
 
 #[unstable(issue = "none", feature = "inplace_iteration")]
-unsafe impl<I> SourceIter for Copied<I>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I> const SourceIter for Copied<I>
 where
-    I: SourceIter,
+    I: [const] SourceIter,
 {
     type Source = I::Source;
 
@@ -275,7 +299,8 @@ where
 }
 
 #[unstable(issue = "none", feature = "inplace_iteration")]
-unsafe impl<I: InPlaceIterable> InPlaceIterable for Copied<I> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I: [const] InPlaceIterable> const InPlaceIterable for Copied<I> {
     const EXPAND_BY: Option<NonZero<usize>> = I::EXPAND_BY;
     const MERGE_BY: Option<NonZero<usize>> = I::MERGE_BY;
 }

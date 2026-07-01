@@ -4,7 +4,7 @@
 
 use std::marker::Destruct;
 
-const fn f<T, F: [const] Fn(&T) -> T + [const] Destruct>(_: F) {}
+const fn f<T, F: [const] Destruct + [const] Fn(&T) -> T + [const] Destruct>(_: F) {}
 
 const fn g<T: [const] Clone>() {
     f(<T as Clone>::clone);

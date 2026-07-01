@@ -1,4 +1,5 @@
 use crate::iter::{FusedIterator, TrustedLen};
+use crate::marker::Destruct;
 use crate::num::NonZero;
 use crate::ops::Try;
 
@@ -33,7 +34,8 @@ pub struct Chain<A, B> {
     b: Option<B>,
 }
 impl<A, B> Chain<A, B> {
-    pub(in super::super) fn new(a: A, b: B) -> Chain<A, B> {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub(in super::super) const fn new(a: A, b: B) -> Chain<A, B> {
         Chain { a: Some(a), b: Some(b) }
     }
 }
@@ -61,19 +63,21 @@ impl<A, B> Chain<A, B> {
 /// assert_eq!(iter.next(), None);
 /// ```
 #[stable(feature = "iter_chain", since = "1.91.0")]
-pub fn chain<A, B>(a: A, b: B) -> Chain<A::IntoIter, B::IntoIter>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+pub const fn chain<A, B>(a: A, b: B) -> Chain<A::IntoIter, B::IntoIter>
 where
-    A: IntoIterator,
-    B: IntoIterator<Item = A::Item>,
+    A: [const] IntoIterator,
+    B: [const] IntoIterator<Item = A::Item>,
 {
     Chain::new(a.into_iter(), b.into_iter())
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<A, B> Iterator for Chain<A, B>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<A, B> const Iterator for Chain<A, B>
 where
-    A: Iterator,
-    B: Iterator<Item = A::Item>,
+    A: [const] Iterator,
+    B: [const] Iterator<Item = A::Item>,
 {
     type Item = A::Item;
 
@@ -99,8 +103,8 @@ where
     fn try_fold<Acc, F, R>(&mut self, mut acc: Acc, mut f: F) -> R
     where
         Self: Sized,
-        F: FnMut(Acc, Self::Item) -> R,
-        R: Try<Output = Acc>,
+        F: [const] Destruct + [const] FnMut(Acc, Self::Item) -> R,
+        R: [const] Try<Output = Acc>,
     {
         if let Some(ref mut a) = self.a {
             acc = a.try_fold(acc, &mut f)?;
@@ -115,7 +119,7 @@ where
 
     fn fold<Acc, F>(self, mut acc: Acc, mut f: F) -> Acc
     where
-        F: FnMut(Acc, Self::Item) -> Acc,
+        F: [const] Destruct + [const] FnMut(Acc, Self::Item) -> Acc,
     {
         if let Some(a) = self.a {
             acc = a.fold(acc, &mut f);
@@ -164,7 +168,7 @@ where
     #[inline]
     fn find<P>(&mut self, mut predicate: P) -> Option<Self::Item>
     where
-        P: FnMut(&Self::Item) -> bool,
+        P: [const] FnMut(&Self::Item) -> bool,
     {
         and_then_or_clear(&mut self.a, |a| a.find(&mut predicate))
             .or_else(|| self.b.as_mut()?.find(predicate))
@@ -202,10 +206,11 @@ where
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<A, B> DoubleEndedIterator for Chain<A, B>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<A, B> const DoubleEndedIterator for Chain<A, B>
 where
-    A: DoubleEndedIterator,
-    B: DoubleEndedIterator<Item = A::Item>,
+    A: [const] DoubleEndedIterator,
+    B: [const] DoubleEndedIterator<Item = A::Item>,
 {
     #[inline]
     fn next_back(&mut self) -> Option<A::Item> {
@@ -250,7 +255,7 @@ where
     #[inline]
     fn rfind<P>(&mut self, mut predicate: P) -> Option<Self::Item>
     where
-        P: FnMut(&Self::Item) -> bool,
+        P: [const] FnMut(&Self::Item) -> bool,
     {
         and_then_or_clear(&mut self.b, |b| b.rfind(&mut predicate))
             .or_else(|| self.a.as_mut()?.rfind(predicate))
@@ -259,8 +264,8 @@ where
     fn try_rfold<Acc, F, R>(&mut self, mut acc: Acc, mut f: F) -> R
     where
         Self: Sized,
-        F: FnMut(Acc, Self::Item) -> R,
-        R: Try<Output = Acc>,
+        F: [const] Destruct + [const] FnMut(Acc, Self::Item) -> R,
+        R: [const] Try<Output = Acc>,
     {
         if let Some(ref mut b) = self.b {
             acc = b.try_rfold(acc, &mut f)?;
@@ -275,7 +280,7 @@ where
 
     fn rfold<Acc, F>(self, mut acc: Acc, mut f: F) -> Acc
     where
-        F: FnMut(Acc, Self::Item) -> Acc,
+        F: [const] Destruct + [const] FnMut(Acc, Self::Item) -> Acc,
     {
         if let Some(b) = self.b {
             acc = b.rfold(acc, &mut f);
@@ -289,23 +294,26 @@ where
 
 // Note: *both* must be fused to handle double-ended iterators.
 #[stable(feature = "fused", since = "1.26.0")]
-impl<A, B> FusedIterator for Chain<A, B>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<A, B> const FusedIterator for Chain<A, B>
 where
-    A: FusedIterator,
-    B: FusedIterator<Item = A::Item>,
+    A: [const] FusedIterator,
+    B: [const] FusedIterator<Item = A::Item>,
 {
 }
 
 #[unstable(feature = "trusted_len", issue = "37572")]
-unsafe impl<A, B> TrustedLen for Chain<A, B>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<A, B> const TrustedLen for Chain<A, B>
 where
-    A: TrustedLen,
-    B: TrustedLen<Item = A::Item>,
+    A: [const] TrustedLen,
+    B: [const] TrustedLen<Item = A::Item>,
 {
 }
 
 #[stable(feature = "default_iters", since = "1.70.0")]
-impl<A: Default, B: Default> Default for Chain<A, B> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<A: [const] Default, B: [const] Default> const Default for Chain<A, B> {
     /// Creates a `Chain` from the default values for `A` and `B`.
     ///
     /// ```
@@ -327,8 +335,12 @@ impl<A: Default, B: Default> Default for Chain<A, B> {
     }
 }
 
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
 #[inline]
-fn and_then_or_clear<T, U>(opt: &mut Option<T>, f: impl FnOnce(&mut T) -> Option<U>) -> Option<U> {
+const fn and_then_or_clear<T, U>(
+    opt: &mut Option<T>,
+    f: impl [const] FnOnce(&mut T) -> Option<U>,
+) -> Option<U> {
     let x = f(opt.as_mut()?);
     if x.is_none() {
         *opt = None;

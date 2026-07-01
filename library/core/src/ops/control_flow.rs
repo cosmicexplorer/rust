@@ -279,7 +279,7 @@ impl<B, C> ControlFlow<B, C> {
     #[rustc_const_unstable(feature = "const_control_flow", issue = "148739")]
     pub const fn map_break<T, F>(self, f: F) -> ControlFlow<T, C>
     where
-        F: [const] FnOnce(B) -> T + [const] Destruct,
+        F: [const] Destruct + [const] FnOnce(B) -> T,
     {
         match self {
             ControlFlow::Continue(x) => ControlFlow::Continue(x),
@@ -392,7 +392,7 @@ impl<B, C> ControlFlow<B, C> {
     #[rustc_const_unstable(feature = "const_control_flow", issue = "148739")]
     pub const fn map_continue<T, F>(self, f: F) -> ControlFlow<B, T>
     where
-        F: [const] FnOnce(C) -> T + [const] Destruct,
+        F: [const] Destruct + [const] FnOnce(C) -> T,
     {
         match self {
             ControlFlow::Continue(x) => ControlFlow::Continue(f(x)),

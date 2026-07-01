@@ -6,9 +6,9 @@
 
 const fn answer_p1<F>(f: &F) -> u8
     where
-        F: [const] FnOnce() -> u8,
-        F: [const] FnMut() -> u8,
-        F: [const] Fn() -> u8,
+        F: [const] Destruct + [const] FnOnce() -> u8,
+        F: [const] Destruct + [const] FnMut() -> u8,
+        F: [const] Destruct + [const] Fn() -> u8,
 {
     f() * 7
 }
@@ -21,7 +21,7 @@ const fn answer_p2() -> u8 {
     answer_p1(&three)
 }
 
-const fn answer<F: [const] Fn() -> u8>(f: &F) -> u8 {
+const fn answer<F: [const] Destruct + [const] Fn() -> u8>(f: &F) -> u8 {
     f() + f()
 }
 

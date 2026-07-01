@@ -1,6 +1,7 @@
 use crate::fmt;
 use crate::iter::adapters::SourceIter;
 use crate::iter::{FusedIterator, InPlaceIterable, TrustedFused};
+use crate::marker::Destruct;
 use crate::num::NonZero;
 use crate::ops::Try;
 
@@ -21,7 +22,8 @@ pub struct SkipWhile<I, P> {
 }
 
 impl<I, P> SkipWhile<I, P> {
-    pub(in crate::iter) fn new(iter: I, predicate: P) -> SkipWhile<I, P> {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub(in crate::iter) const fn new(iter: I, predicate: P) -> SkipWhile<I, P> {
         SkipWhile { iter, flag: false, predicate }
     }
 }
@@ -34,9 +36,10 @@ impl<I: fmt::Debug, P> fmt::Debug for SkipWhile<I, P> {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<I: Iterator, P> Iterator for SkipWhile<I, P>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I: [const] Iterator, P> const Iterator for SkipWhile<I, P>
 where
-    P: FnMut(&I::Item) -> bool,
+    P: [const] FnMut(&I::Item) -> bool,
 {
     type Item = I::Item;
 
@@ -71,8 +74,8 @@ where
     fn try_fold<Acc, Fold, R>(&mut self, mut init: Acc, mut fold: Fold) -> R
     where
         Self: Sized,
-        Fold: FnMut(Acc, Self::Item) -> R,
-        R: Try<Output = Acc>,
+        Fold: [const] FnMut(Acc, Self::Item) -> R,
+        R: [const] Try<Output = Acc>,
     {
         if !self.flag {
             match self.next() {
@@ -86,7 +89,7 @@ where
     #[inline]
     fn fold<Acc, Fold>(mut self, mut init: Acc, mut fold: Fold) -> Acc
     where
-        Fold: FnMut(Acc, Self::Item) -> Acc,
+        Fold: [const] FnMut(Acc, Self::Item) -> Acc,
     {
         if !self.flag {
             match self.next() {
@@ -99,20 +102,23 @@ where
 }
 
 #[stable(feature = "fused", since = "1.26.0")]
-impl<I, P> FusedIterator for SkipWhile<I, P>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I, P> const FusedIterator for SkipWhile<I, P>
 where
-    I: FusedIterator,
-    P: FnMut(&I::Item) -> bool,
+    I: [const] FusedIterator,
+    P: [const] FnMut(&I::Item) -> bool,
 {
 }
 
 #[unstable(issue = "none", feature = "trusted_fused")]
-unsafe impl<I: TrustedFused, P> TrustedFused for SkipWhile<I, P> {}
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I: [const] TrustedFused, P> const TrustedFused for SkipWhile<I, P> {}
 
 #[unstable(issue = "none", feature = "inplace_iteration")]
-unsafe impl<P, I> SourceIter for SkipWhile<I, P>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<P, I> const SourceIter for SkipWhile<I, P>
 where
-    I: SourceIter,
+    I: [const] SourceIter,
 {
     type Source = I::Source;
 
@@ -124,7 +130,8 @@ where
 }
 
 #[unstable(issue = "none", feature = "inplace_iteration")]
-unsafe impl<I: InPlaceIterable, F> InPlaceIterable for SkipWhile<I, F> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I: [const] InPlaceIterable, F> const InPlaceIterable for SkipWhile<I, F> {
     const EXPAND_BY: Option<NonZero<usize>> = I::EXPAND_BY;
     const MERGE_BY: Option<NonZero<usize>> = I::MERGE_BY;
 }

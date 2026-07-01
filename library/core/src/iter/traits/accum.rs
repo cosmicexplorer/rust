@@ -14,11 +14,12 @@ use crate::num::{Saturating, Wrapping};
     message = "a value of type `{Self}` cannot be made by summing an iterator over elements of type `{A}`",
     label = "value of type `{Self}` cannot be made by summing a `std::iter::Iterator<Item={A}>`"
 )]
-pub trait Sum<A = Self>: Sized {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+pub const trait Sum<A = Self>: Sized {
     /// Takes an iterator and generates `Self` from the elements by "summing up"
     /// the items.
     #[stable(feature = "iter_arith_traits", since = "1.12.0")]
-    fn sum<I: Iterator<Item = A>>(iter: I) -> Self;
+    fn sum<I: [const] Iterator<Item = A>>(iter: I) -> Self;
 }
 
 /// Trait to represent types that can be created by multiplying elements of an
@@ -35,18 +36,20 @@ pub trait Sum<A = Self>: Sized {
     message = "a value of type `{Self}` cannot be made by multiplying all elements of type `{A}` from an iterator",
     label = "value of type `{Self}` cannot be made by multiplying all elements from a `std::iter::Iterator<Item={A}>`"
 )]
-pub trait Product<A = Self>: Sized {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+pub const trait Product<A = Self>: Sized {
     /// Takes an iterator and generates `Self` from the elements by multiplying
     /// the items.
     #[stable(feature = "iter_arith_traits", since = "1.12.0")]
-    fn product<I: Iterator<Item = A>>(iter: I) -> Self;
+    fn product<I: [const] Iterator<Item = A>>(iter: I) -> Self;
 }
 
 macro_rules! integer_sum_product {
     (@impls $zero:expr, $one:expr, #[$attr:meta], $($a:ty)*) => ($(
         #[$attr]
-        impl Sum for $a {
-            fn sum<I: Iterator<Item=Self>>(iter: I) -> Self {
+        #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+        impl const Sum for $a {
+            fn sum<I: [const] Iterator<Item=Self>>(iter: I) -> Self {
                 iter.fold(
                     $zero,
                     #[rustc_inherit_overflow_checks]
@@ -56,8 +59,9 @@ macro_rules! integer_sum_product {
         }
 
         #[$attr]
-        impl Product for $a {
-            fn product<I: Iterator<Item=Self>>(iter: I) -> Self {
+        #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+        impl const Product for $a {
+            fn product<I: [const] Iterator<Item=Self>>(iter: I) -> Self {
                 iter.fold(
                     $one,
                     #[rustc_inherit_overflow_checks]
@@ -67,8 +71,9 @@ macro_rules! integer_sum_product {
         }
 
         #[$attr]
-        impl<'a> Sum<&'a $a> for $a {
-            fn sum<I: Iterator<Item=&'a Self>>(iter: I) -> Self {
+        #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+        impl<'a> const Sum<&'a $a> for $a {
+            fn sum<I: [const] Iterator<Item=&'a Self>>(iter: I) -> Self {
                 iter.fold(
                     $zero,
                     #[rustc_inherit_overflow_checks]
@@ -78,8 +83,9 @@ macro_rules! integer_sum_product {
         }
 
         #[$attr]
-        impl<'a> Product<&'a $a> for $a {
-            fn product<I: Iterator<Item=&'a Self>>(iter: I) -> Self {
+        #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+        impl<'a> const Product<&'a $a> for $a {
+            fn product<I: [const] Iterator<Item=&'a Self>>(iter: I) -> Self {
                 iter.fold(
                     $one,
                     #[rustc_inherit_overflow_checks]
@@ -102,8 +108,9 @@ macro_rules! saturating_integer_sum_product {
     (@impls $zero:expr, $one:expr, $doc:expr, #[$attr:meta], $($a:ty)*) => ($(
         #[$attr]
         #[doc = $doc]
-        impl Sum for $a {
-            fn sum<I: Iterator<Item=Self>>(iter: I) -> Self {
+        #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+        impl const Sum for $a {
+            fn sum<I: [const] Iterator<Item=Self>>(iter: I) -> Self {
                 iter.fold(
                     $zero,
                     |a, b| a + b,
@@ -113,8 +120,9 @@ macro_rules! saturating_integer_sum_product {
 
         #[$attr]
         #[doc = $doc]
-        impl Product for $a {
-            fn product<I: Iterator<Item=Self>>(iter: I) -> Self {
+        #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+        impl const Product for $a {
+            fn product<I: [const] Iterator<Item=Self>>(iter: I) -> Self {
                 iter.fold(
                     $one,
                     |a, b| a * b,
@@ -124,8 +132,9 @@ macro_rules! saturating_integer_sum_product {
 
         #[$attr]
         #[doc = $doc]
-        impl<'a> Sum<&'a $a> for $a {
-            fn sum<I: Iterator<Item=&'a Self>>(iter: I) -> Self {
+        #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+        impl<'a> const Sum<&'a $a> for $a {
+            fn sum<I: [const] Iterator<Item=&'a Self>>(iter: I) -> Self {
                 iter.fold(
                     $zero,
                     |a, b| a + b,
@@ -135,8 +144,9 @@ macro_rules! saturating_integer_sum_product {
 
         #[$attr]
         #[doc = $doc]
-        impl<'a> Product<&'a $a> for $a {
-            fn product<I: Iterator<Item=&'a Self>>(iter: I) -> Self {
+        #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+        impl<'a> const Product<&'a $a> for $a {
+            fn product<I: [const] Iterator<Item=&'a Self>>(iter: I) -> Self {
                 iter.fold(
                     $one,
                     |a, b| a * b,
@@ -156,8 +166,9 @@ macro_rules! saturating_integer_sum_product {
 macro_rules! float_sum_product {
     ($($a:ident)*) => ($(
         #[stable(feature = "iter_arith_traits", since = "1.12.0")]
-        impl Sum for $a {
-            fn sum<I: Iterator<Item=Self>>(iter: I) -> Self {
+        #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+        impl const Sum for $a {
+            fn sum<I: [const] Iterator<Item=Self>>(iter: I) -> Self {
                 iter.fold(
                     -0.0,
                     #[rustc_inherit_overflow_checks]
@@ -167,8 +178,9 @@ macro_rules! float_sum_product {
         }
 
         #[stable(feature = "iter_arith_traits", since = "1.12.0")]
-        impl Product for $a {
-            fn product<I: Iterator<Item=Self>>(iter: I) -> Self {
+        #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+        impl const Product for $a {
+            fn product<I: [const] Iterator<Item=Self>>(iter: I) -> Self {
                 iter.fold(
                     1.0,
                     #[rustc_inherit_overflow_checks]
@@ -178,8 +190,9 @@ macro_rules! float_sum_product {
         }
 
         #[stable(feature = "iter_arith_traits", since = "1.12.0")]
-        impl<'a> Sum<&'a $a> for $a {
-            fn sum<I: Iterator<Item=&'a Self>>(iter: I) -> Self {
+        #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+        impl<'a> const Sum<&'a $a> for $a {
+            fn sum<I: [const] Iterator<Item=&'a Self>>(iter: I) -> Self {
                 iter.fold(
                     -0.0,
                     #[rustc_inherit_overflow_checks]
@@ -189,8 +202,9 @@ macro_rules! float_sum_product {
         }
 
         #[stable(feature = "iter_arith_traits", since = "1.12.0")]
-        impl<'a> Product<&'a $a> for $a {
-            fn product<I: Iterator<Item=&'a Self>>(iter: I) -> Self {
+        #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+        impl<'a> const Product<&'a $a> for $a {
+            fn product<I: [const] Iterator<Item=&'a Self>>(iter: I) -> Self {
                 iter.fold(
                     1.0,
                     #[rustc_inherit_overflow_checks]
@@ -206,9 +220,10 @@ saturating_integer_sum_product! { u8 u16 u32 u64 u128 usize }
 float_sum_product! { f16 f32 f64 f128 }
 
 #[stable(feature = "iter_arith_traits_result", since = "1.16.0")]
-impl<T, U, E> Sum<Result<U, E>> for Result<T, E>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<T, U, E> const Sum<Result<U, E>> for Result<T, E>
 where
-    T: Sum<U>,
+    T: [const] Sum<U>,
 {
     /// Takes each element in the [`Iterator`]: if it is an [`Err`], no further
     /// elements are taken, and the [`Err`] is returned. Should no [`Err`]
@@ -230,16 +245,17 @@ where
     /// ```
     fn sum<I>(iter: I) -> Result<T, E>
     where
-        I: Iterator<Item = Result<U, E>>,
+        I: [const] Iterator<Item = Result<U, E>>,
     {
         iter::try_process(iter, |i| i.sum())
     }
 }
 
 #[stable(feature = "iter_arith_traits_result", since = "1.16.0")]
-impl<T, U, E> Product<Result<U, E>> for Result<T, E>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<T, U, E> const Product<Result<U, E>> for Result<T, E>
 where
-    T: Product<U>,
+    T: [const] Product<U>,
 {
     /// Takes each element in the [`Iterator`]: if it is an [`Err`], no further
     /// elements are taken, and the [`Err`] is returned. Should no [`Err`]
@@ -260,16 +276,17 @@ where
     /// ```
     fn product<I>(iter: I) -> Result<T, E>
     where
-        I: Iterator<Item = Result<U, E>>,
+        I: [const] Iterator<Item = Result<U, E>>,
     {
         iter::try_process(iter, |i| i.product())
     }
 }
 
 #[stable(feature = "iter_arith_traits_option", since = "1.37.0")]
-impl<T, U> Sum<Option<U>> for Option<T>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<T, U> const Sum<Option<U>> for Option<T>
 where
-    T: Sum<U>,
+    T: [const] Sum<U>,
 {
     /// Takes each element in the [`Iterator`]: if it is a [`None`], no further
     /// elements are taken, and the [`None`] is returned. Should no [`None`]
@@ -290,16 +307,17 @@ where
     /// ```
     fn sum<I>(iter: I) -> Option<T>
     where
-        I: Iterator<Item = Option<U>>,
+        I: [const] Iterator<Item = Option<U>>,
     {
         iter::try_process(iter, |i| i.sum())
     }
 }
 
 #[stable(feature = "iter_arith_traits_option", since = "1.37.0")]
-impl<T, U> Product<Option<U>> for Option<T>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<T, U> const Product<Option<U>> for Option<T>
 where
-    T: Product<U>,
+    T: [const] Product<U>,
 {
     /// Takes each element in the [`Iterator`]: if it is a [`None`], no further
     /// elements are taken, and the [`None`] is returned. Should no [`None`]
@@ -320,7 +338,7 @@ where
     /// ```
     fn product<I>(iter: I) -> Option<T>
     where
-        I: Iterator<Item = Option<U>>,
+        I: [const] Iterator<Item = Option<U>>,
     {
         iter::try_process(iter, |i| i.product())
     }

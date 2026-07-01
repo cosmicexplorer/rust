@@ -1,5 +1,6 @@
 use crate::iter::adapters::SourceIter;
 use crate::iter::{FusedIterator, TrustedLen};
+use crate::marker::Destruct;
 use crate::ops::{ControlFlow, Try};
 
 /// An iterator with a `peek()` that returns an optional reference to the next
@@ -21,7 +22,8 @@ pub struct Peekable<I: Iterator> {
 }
 
 impl<I: Iterator> Peekable<I> {
-    pub(in crate::iter) fn new(iter: I) -> Peekable<I> {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub(in crate::iter) const fn new(iter: I) -> Peekable<I> {
         Peekable { iter, peeked: None }
     }
 }
@@ -31,7 +33,8 @@ impl<I: Iterator> Peekable<I> {
 // underlying iterator at most once. This does not by itself make the iterator
 // fused.
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<I: Iterator> Iterator for Peekable<I> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I: [const] Iterator> const Iterator for Peekable<I> {
     type Item = I::Item;
 
     #[inline]
@@ -92,8 +95,8 @@ impl<I: Iterator> Iterator for Peekable<I> {
     fn try_fold<B, F, R>(&mut self, init: B, mut f: F) -> R
     where
         Self: Sized,
-        F: FnMut(B, Self::Item) -> R,
-        R: Try<Output = B>,
+        F: [const] Destruct + [const] FnMut(B, Self::Item) -> R,
+        R: [const] Try<Output = B>,
     {
         let acc = match self.peeked.take() {
             Some(None) => return try { init },
@@ -106,7 +109,7 @@ impl<I: Iterator> Iterator for Peekable<I> {
     #[inline]
     fn fold<Acc, Fold>(self, init: Acc, mut fold: Fold) -> Acc
     where
-        Fold: FnMut(Acc, Self::Item) -> Acc,
+        Fold: [const] FnMut(Acc, Self::Item) -> Acc,
     {
         let acc = match self.peeked {
             Some(None) => return init,
@@ -118,9 +121,10 @@ impl<I: Iterator> Iterator for Peekable<I> {
 }
 
 #[stable(feature = "double_ended_peek_iterator", since = "1.38.0")]
-impl<I> DoubleEndedIterator for Peekable<I>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I> const DoubleEndedIterator for Peekable<I>
 where
-    I: DoubleEndedIterator,
+    I: [const] DoubleEndedIterator,
 {
     #[inline]
     fn next_back(&mut self) -> Option<Self::Item> {
@@ -135,8 +139,8 @@ where
     fn try_rfold<B, F, R>(&mut self, init: B, mut f: F) -> R
     where
         Self: Sized,
-        F: FnMut(B, Self::Item) -> R,
-        R: Try<Output = B>,
+        F: [const] Destruct + [const] FnMut(B, Self::Item) -> R,
+        R: [const] Try<Output = B>,
     {
         match self.peeked.take() {
             Some(None) => try { init },
@@ -154,7 +158,7 @@ where
     #[inline]
     fn rfold<Acc, Fold>(self, init: Acc, mut fold: Fold) -> Acc
     where
-        Fold: FnMut(Acc, Self::Item) -> Acc,
+        Fold: [const] FnMut(Acc, Self::Item) -> Acc,
     {
         match self.peeked {
             Some(None) => init,
@@ -168,10 +172,12 @@ where
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<I: ExactSizeIterator> ExactSizeIterator for Peekable<I> {}
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I: [const] ExactSizeIterator> const ExactSizeIterator for Peekable<I> {}
 
 #[stable(feature = "fused", since = "1.26.0")]
-impl<I: FusedIterator> FusedIterator for Peekable<I> {}
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I: [const] FusedIterator> const FusedIterator for Peekable<I> {}
 
 impl<I: Iterator> Peekable<I> {
     /// Returns a reference to the next() value without advancing the iterator.
@@ -213,7 +219,11 @@ impl<I: Iterator> Peekable<I> {
     /// ```
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
-    pub fn peek(&mut self) -> Option<&I::Item> {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn peek(&mut self) -> Option<&I::Item>
+    where
+        I: [const] Iterator,
+    {
         let iter = &mut self.iter;
         self.peeked.get_or_insert_with(|| iter.next()).as_ref()
     }
@@ -253,7 +263,11 @@ impl<I: Iterator> Peekable<I> {
     /// ```
     #[inline]
     #[stable(feature = "peekable_peek_mut", since = "1.53.0")]
-    pub fn peek_mut(&mut self) -> Option<&mut I::Item> {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn peek_mut(&mut self) -> Option<&mut I::Item>
+    where
+        I: [const] Iterator,
+    {
         let iter = &mut self.iter;
         self.peeked.get_or_insert_with(|| iter.next()).as_mut()
     }
@@ -284,7 +298,11 @@ impl<I: Iterator> Peekable<I> {
     /// assert_eq!(iter.next(), Some(10));
     /// ```
     #[stable(feature = "peekable_next_if", since = "1.51.0")]
-    pub fn next_if(&mut self, func: impl FnOnce(&I::Item) -> bool) -> Option<I::Item> {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn next_if(&mut self, func: impl [const] FnOnce(&I::Item) -> bool) -> Option<I::Item>
+    where
+        I: [const] Iterator,
+    {
         match self.next() {
             Some(matched) if func(&matched) => Some(matched),
             other => {
@@ -310,10 +328,12 @@ impl<I: Iterator> Peekable<I> {
     /// assert_eq!(iter.next(), Some(1));
     /// ```
     #[stable(feature = "peekable_next_if", since = "1.51.0")]
-    pub fn next_if_eq<T>(&mut self, expected: &T) -> Option<I::Item>
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn next_if_eq<T>(&mut self, expected: &T) -> Option<I::Item>
     where
         T: ?Sized,
-        I::Item: PartialEq<T>,
+        I: [const] Iterator,
+        I::Item: [const] PartialEq<T>,
     {
         self.next_if(|next| next == expected)
     }
@@ -407,7 +427,14 @@ impl<I: Iterator> Peekable<I> {
     ///# )
     /// ```
     #[stable(feature = "peekable_next_if_map", since = "CURRENT_RUSTC_VERSION")]
-    pub fn next_if_map<R>(&mut self, f: impl FnOnce(I::Item) -> Result<R, I::Item>) -> Option<R> {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn next_if_map<R>(
+        &mut self,
+        f: impl [const] Destruct + [const] FnOnce(I::Item) -> Result<R, I::Item>,
+    ) -> Option<R>
+    where
+        I: [const] Iterator,
+    {
         let unpeek = if let Some(item) = self.next() {
             match f(item) {
                 Ok(result) => return Some(result),
@@ -444,7 +471,14 @@ impl<I: Iterator> Peekable<I> {
     /// assert_eq!(iter.collect::<String>(), " GOTO 10");
     /// ```
     #[stable(feature = "peekable_next_if_map", since = "CURRENT_RUSTC_VERSION")]
-    pub fn next_if_map_mut<R>(&mut self, f: impl FnOnce(&mut I::Item) -> Option<R>) -> Option<R> {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn next_if_map_mut<R>(
+        &mut self,
+        f: impl [const] FnOnce(&mut I::Item) -> Option<R>,
+    ) -> Option<R>
+    where
+        I: [const] Iterator,
+    {
         let unpeek = if let Some(mut item) = self.next() {
             match f(&mut item) {
                 Some(result) => return Some(result),
@@ -459,12 +493,14 @@ impl<I: Iterator> Peekable<I> {
 }
 
 #[unstable(feature = "trusted_len", issue = "37572")]
-unsafe impl<I> TrustedLen for Peekable<I> where I: TrustedLen {}
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I> const TrustedLen for Peekable<I> where I: [const] TrustedLen {}
 
 #[unstable(issue = "none", feature = "inplace_iteration")]
-unsafe impl<I: Iterator> SourceIter for Peekable<I>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I: Iterator> const SourceIter for Peekable<I>
 where
-    I: SourceIter,
+    I: [const] SourceIter,
 {
     type Source = I::Source;
 

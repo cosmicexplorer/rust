@@ -2,6 +2,7 @@ use crate::fmt;
 use crate::iter::adapters::zip::try_get_unchecked;
 use crate::iter::adapters::{SourceIter, TrustedRandomAccess, TrustedRandomAccessNoCoerce};
 use crate::iter::{FusedIterator, InPlaceIterable, TrustedFused, TrustedLen, UncheckedIterator};
+use crate::marker::Destruct;
 use crate::num::NonZero;
 use crate::ops::Try;
 
@@ -65,11 +66,16 @@ pub struct Map<I, F> {
 }
 
 impl<I, F> Map<I, F> {
-    pub(in crate::iter) fn new(iter: I, f: F) -> Map<I, F> {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub(in crate::iter) const fn new(iter: I, f: F) -> Map<I, F> {
         Map { iter, f }
     }
 
-    pub(crate) fn into_inner(self) -> I {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub(crate) const fn into_inner(self) -> I
+    where
+        Self: [const] crate::marker::Destruct,
+    {
         self.iter
     }
 }
@@ -81,24 +87,27 @@ impl<I: fmt::Debug, F> fmt::Debug for Map<I, F> {
     }
 }
 
-fn map_fold<T, B, Acc>(
-    mut f: impl FnMut(T) -> B,
-    mut g: impl FnMut(Acc, B) -> Acc,
-) -> impl FnMut(Acc, T) -> Acc {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+const fn map_fold<T, B, Acc>(
+    mut f: impl [const] FnMut(T) -> B,
+    mut g: impl [const] FnMut(Acc, B) -> Acc,
+) -> impl [const] FnMut(Acc, T) -> Acc {
     move |acc, elt| g(acc, f(elt))
 }
 
-fn map_try_fold<'a, T, B, Acc, R>(
-    f: &'a mut impl FnMut(T) -> B,
-    mut g: impl FnMut(Acc, B) -> R + 'a,
-) -> impl FnMut(Acc, T) -> R + 'a {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+const fn map_try_fold<'a, T, B, Acc, R>(
+    f: &'a mut impl [const] FnMut(T) -> B,
+    mut g: impl [const] FnMut(Acc, B) -> R + 'a,
+) -> impl [const] FnMut(Acc, T) -> R + 'a {
     move |acc, elt| g(acc, f(elt))
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<B, I: Iterator, F> Iterator for Map<I, F>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<B, I: [const] Iterator, F> const Iterator for Map<I, F>
 where
-    F: FnMut(I::Item) -> B,
+    F: [const] Destruct + [const] FnMut(I::Item) -> B,
 {
     type Item = B;
 
@@ -115,15 +124,15 @@ where
     fn try_fold<Acc, G, R>(&mut self, init: Acc, g: G) -> R
     where
         Self: Sized,
-        G: FnMut(Acc, Self::Item) -> R,
-        R: Try<Output = Acc>,
+        G: [const] FnMut(Acc, Self::Item) -> R,
+        R: [const] Try<Output = Acc>,
     {
         self.iter.try_fold(init, map_try_fold(&mut self.f, g))
     }
 
     fn fold<Acc, G>(self, init: Acc, g: G) -> Acc
     where
-        G: FnMut(Acc, Self::Item) -> Acc,
+        G: [const] FnMut(Acc, Self::Item) -> Acc,
     {
         self.iter.fold(init, map_fold(self.f, g))
     }
@@ -131,7 +140,7 @@ where
     #[inline]
     unsafe fn __iterator_get_unchecked(&mut self, idx: usize) -> B
     where
-        Self: TrustedRandomAccessNoCoerce,
+        Self: [const] TrustedRandomAccessNoCoerce,
     {
         // SAFETY: the caller must uphold the contract for
         // `Iterator::__iterator_get_unchecked`.
@@ -140,9 +149,10 @@ where
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<B, I: DoubleEndedIterator, F> DoubleEndedIterator for Map<I, F>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<B, I: [const] DoubleEndedIterator, F> const DoubleEndedIterator for Map<I, F>
 where
-    F: FnMut(I::Item) -> B,
+    F: [const] Destruct + [const] FnMut(I::Item) -> B,
 {
     #[inline]
     fn next_back(&mut self) -> Option<B> {
@@ -152,24 +162,25 @@ where
     fn try_rfold<Acc, G, R>(&mut self, init: Acc, g: G) -> R
     where
         Self: Sized,
-        G: FnMut(Acc, Self::Item) -> R,
-        R: Try<Output = Acc>,
+        G: [const] FnMut(Acc, Self::Item) -> R,
+        R: [const] Try<Output = Acc>,
     {
         self.iter.try_rfold(init, map_try_fold(&mut self.f, g))
     }
 
     fn rfold<Acc, G>(self, init: Acc, g: G) -> Acc
     where
-        G: FnMut(Acc, Self::Item) -> Acc,
+        G: [const] FnMut(Acc, Self::Item) -> Acc,
     {
         self.iter.rfold(init, map_fold(self.f, g))
     }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<B, I: ExactSizeIterator, F> ExactSizeIterator for Map<I, F>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<B, I: [const] ExactSizeIterator, F> const ExactSizeIterator for Map<I, F>
 where
-    F: FnMut(I::Item) -> B,
+    F: [const] Destruct + [const] FnMut(I::Item) -> B,
 {
     fn len(&self) -> usize {
         self.iter.len()
@@ -181,23 +192,30 @@ where
 }
 
 #[stable(feature = "fused", since = "1.26.0")]
-impl<B, I: FusedIterator, F> FusedIterator for Map<I, F> where F: FnMut(I::Item) -> B {}
-
-#[unstable(issue = "none", feature = "trusted_fused")]
-unsafe impl<I: TrustedFused, F> TrustedFused for Map<I, F> {}
-
-#[unstable(feature = "trusted_len", issue = "37572")]
-unsafe impl<B, I, F> TrustedLen for Map<I, F>
-where
-    I: TrustedLen,
-    F: FnMut(I::Item) -> B,
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<B, I: [const] FusedIterator, F> const FusedIterator for Map<I, F> where
+    F: [const] Destruct + [const] FnMut(I::Item) -> B
 {
 }
 
-impl<B, I, F> UncheckedIterator for Map<I, F>
+#[unstable(issue = "none", feature = "trusted_fused")]
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I: [const] TrustedFused, F> const TrustedFused for Map<I, F> {}
+
+#[unstable(feature = "trusted_len", issue = "37572")]
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<B, I, F> const TrustedLen for Map<I, F>
 where
-    I: UncheckedIterator,
-    F: FnMut(I::Item) -> B,
+    I: [const] TrustedLen,
+    F: [const] Destruct + [const] FnMut(I::Item) -> B,
+{
+}
+
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<B, I, F> const UncheckedIterator for Map<I, F>
+where
+    I: [const] UncheckedIterator,
+    F: [const] Destruct + [const] FnMut(I::Item) -> B,
 {
     unsafe fn next_unchecked(&mut self) -> B {
         // SAFETY: `Map` is 1:1 with the inner iterator, so if the caller promised
@@ -209,21 +227,24 @@ where
 
 #[doc(hidden)]
 #[unstable(feature = "trusted_random_access", issue = "none")]
-unsafe impl<I, F> TrustedRandomAccess for Map<I, F> where I: TrustedRandomAccess {}
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I, F> const TrustedRandomAccess for Map<I, F> where I: [const] TrustedRandomAccess {}
 
 #[doc(hidden)]
 #[unstable(feature = "trusted_random_access", issue = "none")]
-unsafe impl<I, F> TrustedRandomAccessNoCoerce for Map<I, F>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I, F> const TrustedRandomAccessNoCoerce for Map<I, F>
 where
-    I: TrustedRandomAccessNoCoerce,
+    I: [const] TrustedRandomAccessNoCoerce,
 {
     const MAY_HAVE_SIDE_EFFECT: bool = true;
 }
 
 #[unstable(issue = "none", feature = "inplace_iteration")]
-unsafe impl<I, F> SourceIter for Map<I, F>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I, F> const SourceIter for Map<I, F>
 where
-    I: SourceIter,
+    I: [const] SourceIter,
 {
     type Source = I::Source;
 
@@ -235,7 +256,8 @@ where
 }
 
 #[unstable(issue = "none", feature = "inplace_iteration")]
-unsafe impl<I: InPlaceIterable, F> InPlaceIterable for Map<I, F> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I: [const] InPlaceIterable, F> const InPlaceIterable for Map<I, F> {
     const EXPAND_BY: Option<NonZero<usize>> = I::EXPAND_BY;
     const MERGE_BY: Option<NonZero<usize>> = I::MERGE_BY;
 }

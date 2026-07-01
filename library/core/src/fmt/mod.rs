@@ -118,7 +118,8 @@ pub struct Error;
 /// [flushable]: ../../std/io/trait.Write.html#tymethod.flush
 #[stable(feature = "rust1", since = "1.0.0")]
 #[rustc_diagnostic_item = "FmtWrite"]
-pub trait Write {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+pub const trait Write {
     /// Writes a string slice into this writer, returning whether the write
     /// succeeded.
     ///
@@ -212,11 +213,13 @@ pub trait Write {
     fn write_fmt(&mut self, args: Arguments<'_>) -> Result {
         // We use a specialization for `Sized` types to avoid an indirection
         // through `&mut self`
-        trait SpecWriteFmt {
+        #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+        const trait SpecWriteFmt {
             fn spec_write_fmt(self, args: Arguments<'_>) -> Result;
         }
 
-        impl<W: Write + ?Sized> SpecWriteFmt for &mut W {
+        #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+        impl<W: [const] Write + ?Sized> const SpecWriteFmt for &mut W {
             #[inline]
             default fn spec_write_fmt(mut self, args: Arguments<'_>) -> Result {
                 if let Some(s) = args.as_statically_known_str() {
@@ -227,7 +230,8 @@ pub trait Write {
             }
         }
 
-        impl<W: Write> SpecWriteFmt for &mut W {
+        #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+        impl<W: [const] Write> const SpecWriteFmt for &mut W {
             #[inline]
             fn spec_write_fmt(self, args: Arguments<'_>) -> Result {
                 if let Some(s) = args.as_statically_known_str() {
@@ -243,7 +247,8 @@ pub trait Write {
 }
 
 #[stable(feature = "fmt_write_blanket_impl", since = "1.4.0")]
-impl<W: Write + ?Sized> Write for &mut W {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<W: [const] Write + ?Sized> const Write for &mut W {
     fn write_str(&mut self, s: &str) -> Result {
         (**self).write_str(s)
     }
@@ -538,7 +543,8 @@ impl FormattingOptions {
 }
 
 #[unstable(feature = "formatting_options", issue = "118117")]
-impl Default for FormattingOptions {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl const Default for FormattingOptions {
     /// Same as [`FormattingOptions::new()`].
     fn default() -> Self {
         // The `#[derive(Default)]` implementation would set `fill` to `\0` instead of space.
@@ -725,8 +731,9 @@ pub struct Arguments<'a> {
 impl<'a> Arguments<'a> {
     // SAFETY: The caller must ensure that the provided template and args encode a valid
     // fmt::Arguments, as documented above.
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
     #[inline]
-    pub unsafe fn new<const N: usize, const M: usize>(
+    pub const unsafe fn new<const N: usize, const M: usize>(
         template: &'a [u8; N],
         args: &'a [rt::Argument<'a>; M],
     ) -> Arguments<'a> {
@@ -750,8 +757,9 @@ impl<'a> Arguments<'a> {
     ///
     /// This is intended to be used for setting initial `String` capacity
     /// when using `format!`. Note: this is neither the lower nor upper bound.
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
     #[inline]
-    pub fn estimated_capacity(&self) -> usize {
+    pub const fn estimated_capacity(&self) -> usize {
         if let Some(s) = self.as_str() {
             return s.len();
         }
@@ -893,7 +901,8 @@ impl<'a> Arguments<'a> {
     #[must_use]
     #[inline]
     #[doc(hidden)]
-    pub fn as_statically_known_str(&self) -> Option<&'static str> {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn as_statically_known_str(&self) -> Option<&'static str> {
         let s = self.as_str();
         if core::intrinsics::is_val_statically_known(s.is_some()) { s } else { None }
     }
@@ -1049,7 +1058,8 @@ impl Display for Arguments<'_> {
 #[doc(alias = "{:?}")]
 #[rustc_diagnostic_item = "Debug"]
 #[rustc_trivial_field_reads]
-pub trait Debug: PointeeSized {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+pub const trait Debug: PointeeSized {
     #[doc = include_str!("fmt_trait_method_doc.md")]
     ///
     /// # Examples
@@ -1183,7 +1193,8 @@ pub use macros::Debug;
 #[doc(alias = "{}")]
 #[rustc_diagnostic_item = "Display"]
 #[stable(feature = "rust1", since = "1.0.0")]
-pub trait Display: PointeeSized {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+pub const trait Display: PointeeSized {
     #[doc = include_str!("fmt_trait_method_doc.md")]
     ///
     /// # Examples
@@ -1259,7 +1270,8 @@ pub trait Display: PointeeSized {
 /// assert_eq!(format!("l as octal is: {l:#06o}"), "l as octal is: 0o0011");
 /// ```
 #[stable(feature = "rust1", since = "1.0.0")]
-pub trait Octal: PointeeSized {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+pub const trait Octal: PointeeSized {
     #[doc = include_str!("fmt_trait_method_doc.md")]
     #[stable(feature = "rust1", since = "1.0.0")]
     fn fmt(&self, f: &mut Formatter<'_>) -> Result;
@@ -1318,7 +1330,8 @@ pub trait Octal: PointeeSized {
 /// );
 /// ```
 #[stable(feature = "rust1", since = "1.0.0")]
-pub trait Binary: PointeeSized {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+pub const trait Binary: PointeeSized {
     #[doc = include_str!("fmt_trait_method_doc.md")]
     #[stable(feature = "rust1", since = "1.0.0")]
     fn fmt(&self, f: &mut Formatter<'_>) -> Result;
@@ -1373,7 +1386,8 @@ pub trait Binary: PointeeSized {
 /// assert_eq!(format!("l as hex is: {l:#010x}"), "l as hex is: 0x00000009");
 /// ```
 #[stable(feature = "rust1", since = "1.0.0")]
-pub trait LowerHex: PointeeSized {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+pub const trait LowerHex: PointeeSized {
     #[doc = include_str!("fmt_trait_method_doc.md")]
     #[stable(feature = "rust1", since = "1.0.0")]
     fn fmt(&self, f: &mut Formatter<'_>) -> Result;
@@ -1428,7 +1442,8 @@ pub trait LowerHex: PointeeSized {
 /// assert_eq!(format!("l as hex is: {l:#010X}"), "l as hex is: 0x7FFFFFFF");
 /// ```
 #[stable(feature = "rust1", since = "1.0.0")]
-pub trait UpperHex: PointeeSized {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+pub const trait UpperHex: PointeeSized {
     #[doc = include_str!("fmt_trait_method_doc.md")]
     #[stable(feature = "rust1", since = "1.0.0")]
     fn fmt(&self, f: &mut Formatter<'_>) -> Result;
@@ -1487,7 +1502,8 @@ pub trait UpperHex: PointeeSized {
 /// ```
 #[stable(feature = "rust1", since = "1.0.0")]
 #[rustc_diagnostic_item = "Pointer"]
-pub trait Pointer: PointeeSized {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+pub const trait Pointer: PointeeSized {
     #[doc = include_str!("fmt_trait_method_doc.md")]
     #[stable(feature = "rust1", since = "1.0.0")]
     fn fmt(&self, f: &mut Formatter<'_>) -> Result;
@@ -1538,7 +1554,8 @@ pub trait Pointer: PointeeSized {
 /// );
 /// ```
 #[stable(feature = "rust1", since = "1.0.0")]
-pub trait LowerExp: PointeeSized {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+pub const trait LowerExp: PointeeSized {
     #[doc = include_str!("fmt_trait_method_doc.md")]
     #[stable(feature = "rust1", since = "1.0.0")]
     fn fmt(&self, f: &mut Formatter<'_>) -> Result;
@@ -1589,7 +1606,8 @@ pub trait LowerExp: PointeeSized {
 /// );
 /// ```
 #[stable(feature = "rust1", since = "1.0.0")]
-pub trait UpperExp: PointeeSized {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+pub const trait UpperExp: PointeeSized {
     #[doc = include_str!("fmt_trait_method_doc.md")]
     #[stable(feature = "rust1", since = "1.0.0")]
     fn fmt(&self, f: &mut Formatter<'_>) -> Result;
@@ -1627,7 +1645,8 @@ pub trait UpperExp: PointeeSized {
 ///
 /// [`write!`]: crate::write!
 #[stable(feature = "rust1", since = "1.0.0")]
-pub fn write(output: &mut dyn Write, fmt: Arguments<'_>) -> Result {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+pub const fn write(output: &mut dyn Write, fmt: Arguments<'_>) -> Result {
     if let Some(s) = fmt.as_str() {
         return output.write_str(s);
     }
@@ -1746,12 +1765,14 @@ pub(crate) struct PostPadding {
 }
 
 impl PostPadding {
-    fn new(fill: char, padding: u16) -> PostPadding {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    const fn new(fill: char, padding: u16) -> PostPadding {
         PostPadding { fill, padding }
     }
 
     /// Writes this post padding.
-    pub(crate) fn write(self, f: &mut Formatter<'_>) -> Result {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub(crate) const fn write(self, f: &mut Formatter<'_>) -> Result {
         for _ in 0..self.padding {
             f.buf.write_char(self.fill)?;
         }
@@ -1760,10 +1781,11 @@ impl PostPadding {
 }
 
 impl<'a> Formatter<'a> {
-    fn wrap_buf<'b, 'c, F>(&'b mut self, wrap: F) -> Formatter<'c>
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    const fn wrap_buf<'b, 'c, F>(&'b mut self, wrap: F) -> Formatter<'c>
     where
         'b: 'c,
-        F: FnOnce(&'b mut (dyn Write + 'b)) -> &'c mut (dyn Write + 'c),
+        F: [const] Destruct + FnOnce(&'b mut (dyn Write + 'b)) -> &'c mut (dyn Write + 'c),
     {
         Formatter {
             // We want to change this
@@ -1822,7 +1844,8 @@ impl<'a> Formatter<'a> {
     /// assert_eq!(format!("{:0>#8}", Foo::new(-1)), "00-Foo 1");
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
-    pub fn pad_integral(&mut self, is_nonnegative: bool, prefix: &str, buf: &str) -> Result {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn pad_integral(&mut self, is_nonnegative: bool, prefix: &str, buf: &str) -> Result {
         let mut width = buf.len();
 
         let mut sign = None;
@@ -1906,7 +1929,8 @@ impl<'a> Formatter<'a> {
     /// assert_eq!(format!("{Foo:0>4}"), "0Foo");
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
-    pub fn pad(&mut self, s: &str) -> Result {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn pad(&mut self, s: &str) -> Result {
         // Make sure there's a fast path up front.
         if self.options.flags & (flags::WIDTH_FLAG | flags::PRECISION_FLAG) == 0 {
             return self.buf.write_str(s);
@@ -1948,7 +1972,8 @@ impl<'a> Formatter<'a> {
     ///
     /// Callers are responsible for ensuring post-padding is written after the
     /// thing that is being padded.
-    pub(crate) fn padding(
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub(crate) const fn padding(
         &mut self,
         padding: u16,
         default: Alignment,
@@ -1977,7 +2002,8 @@ impl<'a> Formatter<'a> {
     /// # Safety
     ///
     /// Any `numfmt::Part::Copy` parts in `formatted` must contain valid UTF-8.
-    unsafe fn pad_formatted_parts(&mut self, formatted: &numfmt::Formatted<'_>) -> Result {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    const unsafe fn pad_formatted_parts(&mut self, formatted: &numfmt::Formatted<'_>) -> Result {
         if self.options.width == 0 {
             // this is the common case and we take a shortcut
             // SAFETY: Per the precondition.
@@ -2021,7 +2047,8 @@ impl<'a> Formatter<'a> {
     /// # Safety
     ///
     /// Any `numfmt::Part::Copy` parts in `formatted` must contain valid UTF-8.
-    unsafe fn write_formatted_parts(&mut self, formatted: &numfmt::Formatted<'_>) -> Result {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    const unsafe fn write_formatted_parts(&mut self, formatted: &numfmt::Formatted<'_>) -> Result {
         unsafe fn write_bytes(buf: &mut dyn Write, s: &[u8]) -> Result {
             // SAFETY: This is used for `numfmt::Part::Num` and `numfmt::Part::Copy`.
             // It's safe to use for `numfmt::Part::Num` since every char `c` is between
@@ -2089,7 +2116,8 @@ impl<'a> Formatter<'a> {
     /// assert_eq!(format!("{Foo:0>8}"), "Foo");
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
-    pub fn write_str(&mut self, data: &str) -> Result {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn write_str(&mut self, data: &str) -> Result {
         self.buf.write_str(data)
     }
 
@@ -2116,9 +2144,10 @@ impl<'a> Formatter<'a> {
     /// assert_eq!(format!("{}", Foo(-1)), "Foo -1");
     /// assert_eq!(format!("{:0>8}", Foo(2)), "Foo 2");
     /// ```
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
-    pub fn write_fmt(&mut self, fmt: Arguments<'_>) -> Result {
+    pub const fn write_fmt(&mut self, fmt: Arguments<'_>) -> Result {
         if let Some(s) = fmt.as_statically_known_str() {
             self.buf.write_str(s)
         } else {
@@ -2134,7 +2163,8 @@ impl<'a> Formatter<'a> {
         note = "use the `sign_plus`, `sign_minus`, `alternate`, \
                 or `sign_aware_zero_pad` methods instead"
     )]
-    pub fn flags(&self) -> u32 {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn flags(&self) -> u32 {
         // Extract the debug upper/lower hex, zero pad, alternate, and plus/minus flags
         // to stay compatible with older versions of Rust.
         self.options.flags >> 21 & 0x3F
@@ -2169,7 +2199,8 @@ impl<'a> Formatter<'a> {
     /// ```
     #[must_use]
     #[stable(feature = "fmt_flags", since = "1.5.0")]
-    pub fn fill(&self) -> char {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn fill(&self) -> char {
         self.options.get_fill()
     }
 
@@ -2204,7 +2235,8 @@ impl<'a> Formatter<'a> {
     /// ```
     #[must_use]
     #[stable(feature = "fmt_flags_align", since = "1.28.0")]
-    pub fn align(&self) -> Option<Alignment> {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn align(&self) -> Option<Alignment> {
         self.options.get_align()
     }
 
@@ -2234,7 +2266,8 @@ impl<'a> Formatter<'a> {
     /// ```
     #[must_use]
     #[stable(feature = "fmt_flags", since = "1.5.0")]
-    pub fn width(&self) -> Option<usize> {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn width(&self) -> Option<usize> {
         if self.options.flags & flags::WIDTH_FLAG == 0 {
             None
         } else {
@@ -2269,7 +2302,8 @@ impl<'a> Formatter<'a> {
     /// ```
     #[must_use]
     #[stable(feature = "fmt_flags", since = "1.5.0")]
-    pub fn precision(&self) -> Option<usize> {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn precision(&self) -> Option<usize> {
         if self.options.flags & flags::PRECISION_FLAG == 0 {
             None
         } else {
@@ -2305,7 +2339,8 @@ impl<'a> Formatter<'a> {
     /// ```
     #[must_use]
     #[stable(feature = "fmt_flags", since = "1.5.0")]
-    pub fn sign_plus(&self) -> bool {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn sign_plus(&self) -> bool {
         self.options.flags & flags::SIGN_PLUS_FLAG != 0
     }
 
@@ -2334,7 +2369,8 @@ impl<'a> Formatter<'a> {
     /// ```
     #[must_use]
     #[stable(feature = "fmt_flags", since = "1.5.0")]
-    pub fn sign_minus(&self) -> bool {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn sign_minus(&self) -> bool {
         self.options.flags & flags::SIGN_MINUS_FLAG != 0
     }
 
@@ -2362,7 +2398,8 @@ impl<'a> Formatter<'a> {
     /// ```
     #[must_use]
     #[stable(feature = "fmt_flags", since = "1.5.0")]
-    pub fn alternate(&self) -> bool {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn alternate(&self) -> bool {
         self.options.flags & flags::ALTERNATE_FLAG != 0
     }
 
@@ -2388,16 +2425,19 @@ impl<'a> Formatter<'a> {
     /// ```
     #[must_use]
     #[stable(feature = "fmt_flags", since = "1.5.0")]
-    pub fn sign_aware_zero_pad(&self) -> bool {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn sign_aware_zero_pad(&self) -> bool {
         self.options.flags & flags::SIGN_AWARE_ZERO_PAD_FLAG != 0
     }
 
     // FIXME: Decide what public API we want for these two flags.
     // https://github.com/rust-lang/rust/issues/48584
-    fn debug_lower_hex(&self) -> bool {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    const fn debug_lower_hex(&self) -> bool {
         self.options.flags & flags::DEBUG_LOWER_HEX_FLAG != 0
     }
-    fn debug_upper_hex(&self) -> bool {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    const fn debug_upper_hex(&self) -> bool {
         self.options.flags & flags::DEBUG_UPPER_HEX_FLAG != 0
     }
 
@@ -2438,7 +2478,8 @@ impl<'a> Formatter<'a> {
     /// );
     /// ```
     #[stable(feature = "debug_builders", since = "1.2.0")]
-    pub fn debug_struct<'b>(&'b mut self, name: &str) -> DebugStruct<'b, 'a> {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn debug_struct<'b>(&'b mut self, name: &str) -> DebugStruct<'b, 'a> {
         builders::debug_struct_new(self, name)
     }
 
@@ -2447,11 +2488,12 @@ impl<'a> Formatter<'a> {
     /// faster for 1 field.
     #[doc(hidden)]
     #[unstable(feature = "fmt_helpers_for_derive", issue = "none")]
-    pub fn debug_struct_field1_finish<'b>(
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn debug_struct_field1_finish<'b>(
         &'b mut self,
         name: &str,
         name1: &str,
-        value1: &dyn Debug,
+        value1: &dyn [const] Debug,
     ) -> Result {
         let mut builder = builders::debug_struct_new(self, name);
         builder.field(name1, value1);
@@ -2463,13 +2505,14 @@ impl<'a> Formatter<'a> {
     /// faster for 2 fields.
     #[doc(hidden)]
     #[unstable(feature = "fmt_helpers_for_derive", issue = "none")]
-    pub fn debug_struct_field2_finish<'b>(
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn debug_struct_field2_finish<'b>(
         &'b mut self,
         name: &str,
         name1: &str,
-        value1: &dyn Debug,
+        value1: &dyn [const] Debug,
         name2: &str,
-        value2: &dyn Debug,
+        value2: &dyn [const] Debug,
     ) -> Result {
         let mut builder = builders::debug_struct_new(self, name);
         builder.field(name1, value1);
@@ -2482,15 +2525,16 @@ impl<'a> Formatter<'a> {
     /// faster for 3 fields.
     #[doc(hidden)]
     #[unstable(feature = "fmt_helpers_for_derive", issue = "none")]
-    pub fn debug_struct_field3_finish<'b>(
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn debug_struct_field3_finish<'b>(
         &'b mut self,
         name: &str,
         name1: &str,
-        value1: &dyn Debug,
+        value1: &dyn [const] Debug,
         name2: &str,
-        value2: &dyn Debug,
+        value2: &dyn [const] Debug,
         name3: &str,
-        value3: &dyn Debug,
+        value3: &dyn [const] Debug,
     ) -> Result {
         let mut builder = builders::debug_struct_new(self, name);
         builder.field(name1, value1);
@@ -2504,17 +2548,18 @@ impl<'a> Formatter<'a> {
     /// faster for 4 fields.
     #[doc(hidden)]
     #[unstable(feature = "fmt_helpers_for_derive", issue = "none")]
-    pub fn debug_struct_field4_finish<'b>(
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn debug_struct_field4_finish<'b>(
         &'b mut self,
         name: &str,
         name1: &str,
-        value1: &dyn Debug,
+        value1: &dyn [const] Debug,
         name2: &str,
-        value2: &dyn Debug,
+        value2: &dyn [const] Debug,
         name3: &str,
-        value3: &dyn Debug,
+        value3: &dyn [const] Debug,
         name4: &str,
-        value4: &dyn Debug,
+        value4: &dyn [const] Debug,
     ) -> Result {
         let mut builder = builders::debug_struct_new(self, name);
         builder.field(name1, value1);
@@ -2529,19 +2574,20 @@ impl<'a> Formatter<'a> {
     /// faster for 5 fields.
     #[doc(hidden)]
     #[unstable(feature = "fmt_helpers_for_derive", issue = "none")]
-    pub fn debug_struct_field5_finish<'b>(
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn debug_struct_field5_finish<'b>(
         &'b mut self,
         name: &str,
         name1: &str,
-        value1: &dyn Debug,
+        value1: &dyn [const] Debug,
         name2: &str,
-        value2: &dyn Debug,
+        value2: &dyn [const] Debug,
         name3: &str,
-        value3: &dyn Debug,
+        value3: &dyn [const] Debug,
         name4: &str,
-        value4: &dyn Debug,
+        value4: &dyn [const] Debug,
         name5: &str,
-        value5: &dyn Debug,
+        value5: &dyn [const] Debug,
     ) -> Result {
         let mut builder = builders::debug_struct_new(self, name);
         builder.field(name1, value1);
@@ -2556,11 +2602,12 @@ impl<'a> Formatter<'a> {
     /// For the cases not covered by `debug_struct_field[12345]_finish`.
     #[doc(hidden)]
     #[unstable(feature = "fmt_helpers_for_derive", issue = "none")]
-    pub fn debug_struct_fields_finish<'b>(
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn debug_struct_fields_finish<'b>(
         &'b mut self,
         name: &str,
         names: &[&str],
-        values: &[&dyn Debug],
+        values: &[&dyn [const] Debug],
     ) -> Result {
         assert_eq!(names.len(), values.len());
         let mut builder = builders::debug_struct_new(self, name);
@@ -2597,7 +2644,8 @@ impl<'a> Formatter<'a> {
     /// );
     /// ```
     #[stable(feature = "debug_builders", since = "1.2.0")]
-    pub fn debug_tuple<'b>(&'b mut self, name: &str) -> DebugTuple<'b, 'a> {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn debug_tuple<'b>(&'b mut self, name: &str) -> DebugTuple<'b, 'a> {
         builders::debug_tuple_new(self, name)
     }
 
@@ -2606,7 +2654,12 @@ impl<'a> Formatter<'a> {
     /// for 1 field.
     #[doc(hidden)]
     #[unstable(feature = "fmt_helpers_for_derive", issue = "none")]
-    pub fn debug_tuple_field1_finish<'b>(&'b mut self, name: &str, value1: &dyn Debug) -> Result {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn debug_tuple_field1_finish<'b>(
+        &'b mut self,
+        name: &str,
+        value1: &dyn [const] Debug,
+    ) -> Result {
         let mut builder = builders::debug_tuple_new(self, name);
         builder.field(value1);
         builder.finish()
@@ -2617,11 +2670,12 @@ impl<'a> Formatter<'a> {
     /// for 2 fields.
     #[doc(hidden)]
     #[unstable(feature = "fmt_helpers_for_derive", issue = "none")]
-    pub fn debug_tuple_field2_finish<'b>(
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn debug_tuple_field2_finish<'b>(
         &'b mut self,
         name: &str,
-        value1: &dyn Debug,
-        value2: &dyn Debug,
+        value1: &dyn [const] Debug,
+        value2: &dyn [const] Debug,
     ) -> Result {
         let mut builder = builders::debug_tuple_new(self, name);
         builder.field(value1);
@@ -2634,12 +2688,13 @@ impl<'a> Formatter<'a> {
     /// for 3 fields.
     #[doc(hidden)]
     #[unstable(feature = "fmt_helpers_for_derive", issue = "none")]
-    pub fn debug_tuple_field3_finish<'b>(
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn debug_tuple_field3_finish<'b>(
         &'b mut self,
         name: &str,
-        value1: &dyn Debug,
-        value2: &dyn Debug,
-        value3: &dyn Debug,
+        value1: &dyn [const] Debug,
+        value2: &dyn [const] Debug,
+        value3: &dyn [const] Debug,
     ) -> Result {
         let mut builder = builders::debug_tuple_new(self, name);
         builder.field(value1);
@@ -2653,13 +2708,14 @@ impl<'a> Formatter<'a> {
     /// for 4 fields.
     #[doc(hidden)]
     #[unstable(feature = "fmt_helpers_for_derive", issue = "none")]
-    pub fn debug_tuple_field4_finish<'b>(
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn debug_tuple_field4_finish<'b>(
         &'b mut self,
         name: &str,
-        value1: &dyn Debug,
-        value2: &dyn Debug,
-        value3: &dyn Debug,
-        value4: &dyn Debug,
+        value1: &dyn [const] Debug,
+        value2: &dyn [const] Debug,
+        value3: &dyn [const] Debug,
+        value4: &dyn [const] Debug,
     ) -> Result {
         let mut builder = builders::debug_tuple_new(self, name);
         builder.field(value1);
@@ -2674,14 +2730,15 @@ impl<'a> Formatter<'a> {
     /// for 5 fields.
     #[doc(hidden)]
     #[unstable(feature = "fmt_helpers_for_derive", issue = "none")]
-    pub fn debug_tuple_field5_finish<'b>(
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn debug_tuple_field5_finish<'b>(
         &'b mut self,
         name: &str,
-        value1: &dyn Debug,
-        value2: &dyn Debug,
-        value3: &dyn Debug,
-        value4: &dyn Debug,
-        value5: &dyn Debug,
+        value1: &dyn [const] Debug,
+        value2: &dyn [const] Debug,
+        value3: &dyn [const] Debug,
+        value4: &dyn [const] Debug,
+        value5: &dyn [const] Debug,
     ) -> Result {
         let mut builder = builders::debug_tuple_new(self, name);
         builder.field(value1);
@@ -2696,10 +2753,11 @@ impl<'a> Formatter<'a> {
     /// binaries. For the cases not covered by `debug_tuple_field[12345]_finish`.
     #[doc(hidden)]
     #[unstable(feature = "fmt_helpers_for_derive", issue = "none")]
-    pub fn debug_tuple_fields_finish<'b>(
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn debug_tuple_fields_finish<'b>(
         &'b mut self,
         name: &str,
-        values: &[&dyn Debug],
+        values: &[&dyn [const] Debug],
     ) -> Result {
         let mut builder = builders::debug_tuple_new(self, name);
         for value in values {
@@ -2727,7 +2785,8 @@ impl<'a> Formatter<'a> {
     /// assert_eq!(format!("{:?}", Foo(vec![10, 11])), "[10, 11]");
     /// ```
     #[stable(feature = "debug_builders", since = "1.2.0")]
-    pub fn debug_list<'b>(&'b mut self) -> DebugList<'b, 'a> {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn debug_list<'b>(&'b mut self) -> DebugList<'b, 'a> {
         builders::debug_list_new(self)
     }
 
@@ -2785,7 +2844,8 @@ impl<'a> Formatter<'a> {
     /// }
     /// ```
     #[stable(feature = "debug_builders", since = "1.2.0")]
-    pub fn debug_set<'b>(&'b mut self) -> DebugSet<'b, 'a> {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn debug_set<'b>(&'b mut self) -> DebugSet<'b, 'a> {
         builders::debug_set_new(self)
     }
 
@@ -2811,7 +2871,8 @@ impl<'a> Formatter<'a> {
     ///  );
     /// ```
     #[stable(feature = "debug_builders", since = "1.2.0")]
-    pub fn debug_map<'b>(&'b mut self) -> DebugMap<'b, 'a> {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn debug_map<'b>(&'b mut self) -> DebugMap<'b, 'a> {
         builders::debug_map_new(self)
     }
 
@@ -2829,7 +2890,8 @@ impl<'a> Formatter<'a> {
 }
 
 #[stable(since = "1.2.0", feature = "formatter_write")]
-impl Write for Formatter<'_> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl const Write for Formatter<'_> {
     fn write_str(&mut self, s: &str) -> Result {
         self.buf.write_str(s)
     }
@@ -2849,7 +2911,8 @@ impl Write for Formatter<'_> {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl Display for Error {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl const Display for Error {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         Display::fmt("an error occurred when formatting an argument", f)
     }
@@ -2861,11 +2924,13 @@ macro_rules! fmt_refs {
     ($($tr:ident),*) => {
         $(
         #[stable(feature = "rust1", since = "1.0.0")]
-        impl<T: PointeeSized + $tr> $tr for &T {
+        #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+        impl<T: PointeeSized + [const] $tr> const $tr for &T {
             fn fmt(&self, f: &mut Formatter<'_>) -> Result { $tr::fmt(&**self, f) }
         }
         #[stable(feature = "rust1", since = "1.0.0")]
-        impl<T: PointeeSized + $tr> $tr for &mut T {
+        #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+        impl<T: PointeeSized + [const] $tr> const $tr for &mut T {
             fn fmt(&self, f: &mut Formatter<'_>) -> Result { $tr::fmt(&**self, f) }
         }
         )*
@@ -2875,7 +2940,8 @@ macro_rules! fmt_refs {
 fmt_refs! { Debug, Display, Octal, Binary, LowerHex, UpperHex, LowerExp, UpperExp }
 
 #[unstable(feature = "never_type", issue = "35121")]
-impl Debug for ! {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl const Debug for ! {
     #[inline]
     fn fmt(&self, _: &mut Formatter<'_>) -> Result {
         *self
@@ -2883,7 +2949,8 @@ impl Debug for ! {
 }
 
 #[unstable(feature = "never_type", issue = "35121")]
-impl Display for ! {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl const Display for ! {
     #[inline]
     fn fmt(&self, _: &mut Formatter<'_>) -> Result {
         *self
@@ -2891,7 +2958,8 @@ impl Display for ! {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl Debug for bool {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl const Debug for bool {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         Display::fmt(self, f)
@@ -2899,14 +2967,16 @@ impl Debug for bool {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl Display for bool {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl const Display for bool {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         Display::fmt(if *self { "true" } else { "false" }, f)
     }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl Debug for str {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl const Debug for str {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         f.write_char('"')?;
 
@@ -2955,14 +3025,16 @@ impl Debug for str {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl Display for str {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl const Display for str {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         f.pad(self)
     }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl Debug for char {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl const Debug for char {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         f.write_char('\'')?;
         let esc = self.escape_debug_ext(EscapeDebugExtArgs {
@@ -2976,7 +3048,8 @@ impl Debug for char {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl Display for char {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl const Display for char {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         if f.options.flags & (flags::WIDTH_FLAG | flags::PRECISION_FLAG) == 0 {
             f.write_char(*self)
@@ -2987,7 +3060,8 @@ impl Display for char {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<T: PointeeSized> Pointer for *const T {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<T: PointeeSized> const Pointer for *const T {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         if <<T as core::ptr::Pointee>::Metadata as core::unit::IsUnit>::is_unit() {
             pointer_fmt_inner(self.expose_provenance(), f)
@@ -3008,7 +3082,8 @@ impl<T: PointeeSized> Pointer for *const T {
 /// `fn(...) -> ...` without using [problematic] "Oxford Casts".
 ///
 /// [problematic]: https://github.com/rust-lang/rust/issues/95489
-pub(crate) fn pointer_fmt_inner(ptr_addr: usize, f: &mut Formatter<'_>) -> Result {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+pub(crate) const fn pointer_fmt_inner(ptr_addr: usize, f: &mut Formatter<'_>) -> Result {
     let old_options = f.options;
 
     // The alternate flag is already treated by LowerHex as being special-
@@ -3032,21 +3107,24 @@ pub(crate) fn pointer_fmt_inner(ptr_addr: usize, f: &mut Formatter<'_>) -> Resul
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<T: PointeeSized> Pointer for *mut T {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<T: PointeeSized> const Pointer for *mut T {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         Pointer::fmt(&(*self as *const T), f)
     }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<T: PointeeSized> Pointer for &T {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<T: PointeeSized> const Pointer for &T {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         Pointer::fmt(&(*self as *const T), f)
     }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<T: PointeeSized> Pointer for &mut T {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<T: PointeeSized> const Pointer for &mut T {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         Pointer::fmt(&(&**self as *const T), f)
     }
@@ -3055,13 +3133,15 @@ impl<T: PointeeSized> Pointer for &mut T {
 // Implementation of Display/Debug for various core types
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<T: PointeeSized> Debug for *const T {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<T: PointeeSized> const Debug for *const T {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         Pointer::fmt(self, f)
     }
 }
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<T: PointeeSized> Debug for *mut T {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<T: PointeeSized> const Debug for *mut T {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         Pointer::fmt(self, f)
     }
@@ -3077,7 +3157,8 @@ macro_rules! tuple {
         maybe_tuple_doc! {
             $($name)+ @
             #[stable(feature = "rust1", since = "1.0.0")]
-            impl<$($name:Debug),+> Debug for ($($name,)+) {
+            #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+            impl<$($name:[const] Debug),+> const Debug for ($($name,)+) {
                 #[allow(non_snake_case, unused_assignments)]
                 fn fmt(&self, f: &mut Formatter<'_>) -> Result {
                     let mut builder = f.debug_tuple("");
@@ -3111,35 +3192,40 @@ macro_rules! maybe_tuple_doc {
 tuple! { E, D, C, B, A, Z, Y, X, W, V, U, T, }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<T: Debug> Debug for [T] {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<T: [const] Debug> const Debug for [T] {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         f.debug_list().entries(self.iter()).finish()
     }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl Debug for () {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl const Debug for () {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         f.pad("()")
     }
 }
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<T: ?Sized> Debug for PhantomData<T> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<T: ?Sized> const Debug for PhantomData<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         write!(f, "PhantomData<{}>", crate::any::type_name::<T>())
     }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<T: Copy + Debug> Debug for Cell<T> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<T: Copy + [const] Debug> const Debug for Cell<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         f.debug_struct("Cell").field("value", &self.get()).finish()
     }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<T: ?Sized + Debug> Debug for RefCell<T> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<T: ?Sized + [const] Debug> const Debug for RefCell<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         let mut d = f.debug_struct("RefCell");
         match self.try_borrow() {
@@ -3151,28 +3237,32 @@ impl<T: ?Sized + Debug> Debug for RefCell<T> {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<T: ?Sized + Debug> Debug for Ref<'_, T> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<T: ?Sized + [const] Debug> const Debug for Ref<'_, T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         Debug::fmt(&**self, f)
     }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<T: ?Sized + Debug> Debug for RefMut<'_, T> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<T: ?Sized + [const] Debug> const Debug for RefMut<'_, T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         Debug::fmt(&*(self.deref()), f)
     }
 }
 
 #[stable(feature = "core_impl_debug", since = "1.9.0")]
-impl<T: ?Sized> Debug for UnsafeCell<T> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<T: ?Sized> const Debug for UnsafeCell<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         f.debug_struct("UnsafeCell").finish_non_exhaustive()
     }
 }
 
 #[unstable(feature = "sync_unsafe_cell", issue = "95439")]
-impl<T: ?Sized> Debug for SyncUnsafeCell<T> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<T: ?Sized> const Debug for SyncUnsafeCell<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         f.debug_struct("SyncUnsafeCell").finish_non_exhaustive()
     }

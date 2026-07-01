@@ -1,6 +1,7 @@
 use crate::iter::{FusedIterator, TrustedLen};
 use crate::num::NonZero;
 use crate::ops::Try;
+use crate::marker::Destruct;
 
 /// A double-ended iterator with the direction inverted.
 ///
@@ -17,7 +18,8 @@ pub struct Rev<T> {
 }
 
 impl<T> Rev<T> {
-    pub(in crate::iter) fn new(iter: T) -> Rev<T> {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub(in crate::iter) const fn new(iter: T) -> Rev<T> {
         Rev { iter }
     }
 
@@ -36,15 +38,20 @@ impl<T> Rev<T> {
     /// assert_eq!(rev.into_inner().collect::<String>(), "foo");
     /// ```
     #[unstable(feature = "rev_into_inner", issue = "144277")]
-    pub fn into_inner(self) -> T {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub const fn into_inner(self) -> T
+    where
+        Self: [const] Destruct,
+    {
         self.iter
     }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<I> Iterator for Rev<I>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I> const Iterator for Rev<I>
 where
-    I: DoubleEndedIterator,
+    I: [const] DoubleEndedIterator,
 {
     type Item = <I as Iterator>::Item;
 
@@ -70,15 +77,15 @@ where
     fn try_fold<B, F, R>(&mut self, init: B, f: F) -> R
     where
         Self: Sized,
-        F: FnMut(B, Self::Item) -> R,
-        R: Try<Output = B>,
+        F: [const] Destruct + [const] FnMut(B, Self::Item) -> R,
+        R: [const] Try<Output = B>,
     {
         self.iter.try_rfold(init, f)
     }
 
     fn fold<Acc, F>(self, init: Acc, f: F) -> Acc
     where
-        F: FnMut(Acc, Self::Item) -> Acc,
+        F: [const] Destruct + [const] FnMut(Acc, Self::Item) -> Acc,
     {
         self.iter.rfold(init, f)
     }
@@ -86,16 +93,17 @@ where
     #[inline]
     fn find<P>(&mut self, predicate: P) -> Option<Self::Item>
     where
-        P: FnMut(&Self::Item) -> bool,
+        P: [const] FnMut(&Self::Item) -> bool,
     {
         self.iter.rfind(predicate)
     }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<I> DoubleEndedIterator for Rev<I>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I> const DoubleEndedIterator for Rev<I>
 where
-    I: DoubleEndedIterator,
+    I: [const] DoubleEndedIterator,
 {
     #[inline]
     fn next_back(&mut self) -> Option<<I as Iterator>::Item> {
@@ -115,31 +123,32 @@ where
     fn try_rfold<B, F, R>(&mut self, init: B, f: F) -> R
     where
         Self: Sized,
-        F: FnMut(B, Self::Item) -> R,
-        R: Try<Output = B>,
+        F: [const] Destruct + [const] FnMut(B, Self::Item) -> R,
+        R: [const] Try<Output = B>,
     {
         self.iter.try_fold(init, f)
     }
 
     fn rfold<Acc, F>(self, init: Acc, f: F) -> Acc
     where
-        F: FnMut(Acc, Self::Item) -> Acc,
+        F: [const] Destruct + [const] FnMut(Acc, Self::Item) -> Acc,
     {
         self.iter.fold(init, f)
     }
 
     fn rfind<P>(&mut self, predicate: P) -> Option<Self::Item>
     where
-        P: FnMut(&Self::Item) -> bool,
+        P: [const] FnMut(&Self::Item) -> bool,
     {
         self.iter.find(predicate)
     }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<I> ExactSizeIterator for Rev<I>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I> const ExactSizeIterator for Rev<I>
 where
-    I: ExactSizeIterator + DoubleEndedIterator,
+    I: [const] ExactSizeIterator + [const] DoubleEndedIterator,
 {
     fn len(&self) -> usize {
         self.iter.len()
@@ -151,13 +160,16 @@ where
 }
 
 #[stable(feature = "fused", since = "1.26.0")]
-impl<I> FusedIterator for Rev<I> where I: FusedIterator + DoubleEndedIterator {}
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I> const FusedIterator for Rev<I> where I: [const] FusedIterator + [const] DoubleEndedIterator {}
 
 #[unstable(feature = "trusted_len", issue = "37572")]
-unsafe impl<I> TrustedLen for Rev<I> where I: TrustedLen + DoubleEndedIterator {}
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I> const TrustedLen for Rev<I> where I: [const] TrustedLen + [const] DoubleEndedIterator {}
 
 #[stable(feature = "default_iters", since = "1.70.0")]
-impl<I: Default> Default for Rev<I> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I: [const] Default> const Default for Rev<I> {
     /// Creates a `Rev` iterator from the default value of `I`
     /// ```
     /// # use core::slice;

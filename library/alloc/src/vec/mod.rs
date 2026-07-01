@@ -796,7 +796,7 @@ impl<T> Vec<T> {
     #[unstable(feature = "vec_from_fn", reason = "new API", issue = "149698")]
     pub fn from_fn<F>(length: usize, f: F) -> Self
     where
-        F: FnMut(usize) -> T,
+        F: [const] Destruct + [const] FnMut(usize) -> T,
     {
         (0..length).map(f).collect()
     }
@@ -2363,7 +2363,7 @@ impl<T, A: Allocator> Vec<T, A> {
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn retain<F>(&mut self, mut f: F)
     where
-        F: FnMut(&T) -> bool,
+        F: [const] Destruct + [const] FnMut(&T) -> bool,
     {
         self.retain_mut(|elem| f(elem));
     }
@@ -2389,7 +2389,7 @@ impl<T, A: Allocator> Vec<T, A> {
     #[stable(feature = "vec_retain_mut", since = "1.61.0")]
     pub fn retain_mut<F>(&mut self, mut f: F)
     where
-        F: FnMut(&mut T) -> bool,
+        F: [const] Destruct + [const] FnMut(&mut T) -> bool,
     {
         let original_len = self.len();
 
@@ -2499,7 +2499,7 @@ impl<T, A: Allocator> Vec<T, A> {
     #[inline]
     pub fn dedup_by_key<F, K>(&mut self, mut key: F)
     where
-        F: FnMut(&mut T) -> K,
+        F: [const] Destruct + [const] FnMut(&mut T) -> K,
         K: PartialEq,
     {
         self.dedup_by(|a, b| key(a) == key(b))
@@ -2526,7 +2526,7 @@ impl<T, A: Allocator> Vec<T, A> {
     #[stable(feature = "dedup_by", since = "1.16.0")]
     pub fn dedup_by<F>(&mut self, mut same_bucket: F)
     where
-        F: FnMut(&mut T, &mut T) -> bool,
+        F: [const] Destruct + [const] FnMut(&mut T, &mut T) -> bool,
     {
         let len = self.len();
         if len <= 1 {
@@ -3050,7 +3050,7 @@ impl<T, A: Allocator> Vec<T, A> {
     #[stable(feature = "vec_resize_with", since = "1.33.0")]
     pub fn resize_with<F>(&mut self, new_len: usize, f: F)
     where
-        F: FnMut() -> T,
+        F: [const] Destruct + [const] FnMut() -> T,
     {
         let len = self.len();
         if new_len > len {
@@ -4083,7 +4083,7 @@ impl<T, A: Allocator> Vec<T, A> {
     #[stable(feature = "extract_if", since = "1.87.0")]
     pub fn extract_if<F, R>(&mut self, range: R, filter: F) -> ExtractIf<'_, T, F, A>
     where
-        F: FnMut(&mut T) -> bool,
+        F: [const] Destruct + [const] FnMut(&mut T) -> bool,
         R: RangeBounds<usize>,
     {
         ExtractIf::new(self, filter, range)

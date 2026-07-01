@@ -5,6 +5,7 @@ use crate::iter::{
     FusedIterator, InPlaceIterable, TrustedFused, TrustedLen, TrustedRandomAccess,
     TrustedRandomAccessNoCoerce,
 };
+use crate::marker::Destruct;
 use crate::num::NonZero;
 use crate::ops::{ControlFlow, Try};
 
@@ -24,15 +25,17 @@ pub struct Skip<I> {
 }
 
 impl<I> Skip<I> {
-    pub(in crate::iter) fn new(iter: I, n: usize) -> Skip<I> {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub(in crate::iter) const fn new(iter: I, n: usize) -> Skip<I> {
         Skip { iter, n }
     }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<I> Iterator for Skip<I>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I> const Iterator for Skip<I>
 where
-    I: Iterator,
+    I: [const] Iterator,
 {
     type Item = <I as Iterator>::Item;
 
@@ -104,8 +107,8 @@ where
     fn try_fold<Acc, Fold, R>(&mut self, init: Acc, fold: Fold) -> R
     where
         Self: Sized,
-        Fold: FnMut(Acc, Self::Item) -> R,
-        R: Try<Output = Acc>,
+        Fold: [const] FnMut(Acc, Self::Item) -> R,
+        R: [const] Try<Output = Acc>,
     {
         let n = self.n;
         self.n = 0;
@@ -121,7 +124,7 @@ where
     #[inline]
     fn fold<Acc, Fold>(mut self, init: Acc, fold: Fold) -> Acc
     where
-        Fold: FnMut(Acc, Self::Item) -> Acc,
+        Fold: [const] FnMut(Acc, Self::Item) -> Acc,
     {
         if self.n > 0 {
             // nth(n) skips n+1
@@ -160,7 +163,7 @@ where
     #[doc(hidden)]
     unsafe fn __iterator_get_unchecked(&mut self, idx: usize) -> Self::Item
     where
-        Self: TrustedRandomAccessNoCoerce,
+        Self: [const] TrustedRandomAccessNoCoerce,
     {
         // SAFETY: the caller must uphold the contract for
         // `Iterator::__iterator_get_unchecked`.
@@ -213,10 +216,10 @@ where
     fn try_rfold<Acc, Fold, R>(&mut self, init: Acc, fold: Fold) -> R
     where
         Self: Sized,
-        Fold: FnMut(Acc, Self::Item) -> R,
-        R: Try<Output = Acc>,
+        Fold: [const] FnMut(Acc, Self::Item) -> R,
+        R: [const] Try<Output = Acc>,
     {
-        fn check<T, Acc, R: Try<Output = Acc>>(
+        fn check<T, Acc, R: [const] Try<Output = Acc>>(
             mut n: usize,
             mut fold: impl FnMut(Acc, T) -> R,
         ) -> impl FnMut(Acc, T) -> ControlFlow<R, Acc> {

@@ -1,5 +1,6 @@
 use crate::fmt;
 use crate::iter::FusedIterator;
+use crate::marker::Destruct;
 
 /// Creates an iterator which, starting from an initial item,
 /// computes each successive item from the preceding one.
@@ -19,9 +20,10 @@ use crate::iter::FusedIterator;
 /// assert_eq!(powers_of_10.collect::<Vec<_>>(), &[1, 10, 100, 1_000, 10_000]);
 /// ```
 #[stable(feature = "iter_successors", since = "1.34.0")]
-pub fn successors<T, F>(first: Option<T>, succ: F) -> Successors<T, F>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+pub const fn successors<T, F>(first: Option<T>, succ: F) -> Successors<T, F>
 where
-    F: FnMut(&T) -> Option<T>,
+    F: [const] Destruct + [const] FnMut(&T) -> Option<T>,
 {
     // If this function returned `impl Iterator<Item=T>`
     // it could be based on `from_fn` and not need a dedicated type.
@@ -44,9 +46,11 @@ pub struct Successors<T, F> {
 }
 
 #[stable(feature = "iter_successors", since = "1.34.0")]
-impl<T, F> Iterator for Successors<T, F>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<T, F> const Iterator for Successors<T, F>
 where
-    F: FnMut(&T) -> Option<T>,
+    T: [const] core::marker::Destruct,
+    F: [const] Destruct + [const] FnMut(&T) -> Option<T>,
 {
     type Item = T;
 
@@ -64,7 +68,11 @@ where
 }
 
 #[stable(feature = "iter_successors", since = "1.34.0")]
-impl<T, F> FusedIterator for Successors<T, F> where F: FnMut(&T) -> Option<T> {}
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<T, F> const FusedIterator for Successors<T, F> where
+    F: [const] Destruct + [const] FnMut(&T) -> Option<T>
+{
+}
 
 #[stable(feature = "iter_successors", since = "1.34.0")]
 impl<T: fmt::Debug, F> fmt::Debug for Successors<T, F> {

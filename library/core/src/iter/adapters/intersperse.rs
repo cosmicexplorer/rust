@@ -1,5 +1,6 @@
 use crate::fmt;
 use crate::iter::{Fuse, FusedIterator};
+use crate::marker::Destruct;
 
 /// An iterator adapter that places a separator between all elements.
 ///
@@ -18,27 +19,30 @@ where
 }
 
 #[unstable(feature = "iter_intersperse", reason = "recently added", issue = "79524")]
-impl<I> FusedIterator for Intersperse<I>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I> const FusedIterator for Intersperse<I>
 where
-    I: FusedIterator,
-    I::Item: Clone,
+    I: [const] FusedIterator,
+    I::Item: [const] Clone,
 {
 }
 
-impl<I: Iterator> Intersperse<I>
+impl<I: [const] Iterator> Intersperse<I>
 where
-    I::Item: Clone,
+    I::Item: [const] Clone,
 {
-    pub(in crate::iter) fn new(iter: I, separator: I::Item) -> Self {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub(in crate::iter) const fn new(iter: I, separator: I::Item) -> Self {
         Self { started: false, separator, next_item: None, iter: iter.fuse() }
     }
 }
 
 #[unstable(feature = "iter_intersperse", reason = "recently added", issue = "79524")]
-impl<I> Iterator for Intersperse<I>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I> const Iterator for Intersperse<I>
 where
-    I: Iterator,
-    I::Item: Clone,
+    I: [const] Iterator,
+    I::Item: [const] Clone,
 {
     type Item = I::Item;
 
@@ -69,7 +73,7 @@ where
     fn fold<B, F>(self, init: B, f: F) -> B
     where
         Self: Sized,
-        F: FnMut(B, Self::Item) -> B,
+        F: [const] Destruct + [const] FnMut(B, Self::Item) -> B,
     {
         let separator = self.separator;
         intersperse_fold(
@@ -99,10 +103,11 @@ where
 }
 
 #[unstable(feature = "iter_intersperse", reason = "recently added", issue = "79524")]
-impl<I, G> FusedIterator for IntersperseWith<I, G>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I, G> const FusedIterator for IntersperseWith<I, G>
 where
-    I: FusedIterator,
-    G: FnMut() -> I::Item,
+    I: [const] FusedIterator,
+    G: [const] FnMut() -> I::Item,
 {
 }
 
@@ -124,11 +129,12 @@ where
 }
 
 #[unstable(feature = "iter_intersperse", reason = "recently added", issue = "79524")]
-impl<I, G> Clone for IntersperseWith<I, G>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I, G> const Clone for IntersperseWith<I, G>
 where
-    I: Iterator + Clone,
-    I::Item: Clone,
-    G: Clone,
+    I: [const] Iterator + [const] Clone,
+    I::Item: [const] Clone,
+    G: [const] Clone,
 {
     fn clone(&self) -> Self {
         Self {
@@ -142,19 +148,21 @@ where
 
 impl<I, G> IntersperseWith<I, G>
 where
-    I: Iterator,
-    G: FnMut() -> I::Item,
+    I: [const] Iterator,
+    G: [const] FnMut() -> I::Item,
 {
-    pub(in crate::iter) fn new(iter: I, separator: G) -> Self {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub(in crate::iter) const fn new(iter: I, separator: G) -> Self {
         Self { started: false, separator, next_item: None, iter: iter.fuse() }
     }
 }
 
 #[unstable(feature = "iter_intersperse", reason = "recently added", issue = "79524")]
-impl<I, G> Iterator for IntersperseWith<I, G>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I, G> const Iterator for IntersperseWith<I, G>
 where
-    I: Iterator,
-    G: FnMut() -> I::Item,
+    I: [const] Iterator,
+    G: [const] FnMut() -> I::Item,
 {
     type Item = I::Item;
 
@@ -185,15 +193,20 @@ where
     fn fold<B, F>(self, init: B, f: F) -> B
     where
         Self: Sized,
-        F: FnMut(B, Self::Item) -> B,
+        F: [const] Destruct + [const] FnMut(B, Self::Item) -> B,
     {
         intersperse_fold(self.iter, init, f, self.separator, self.started, self.next_item)
     }
 }
 
-fn intersperse_size_hint<I>(iter: &I, started: bool, next_is_some: bool) -> (usize, Option<usize>)
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+const fn intersperse_size_hint<I>(
+    iter: &I,
+    started: bool,
+    next_is_some: bool,
+) -> (usize, Option<usize>)
 where
-    I: Iterator,
+    I: [const] Iterator,
 {
     let (lo, hi) = iter.size_hint();
     (
@@ -208,7 +221,8 @@ where
     )
 }
 
-fn intersperse_fold<I, B, F, G>(
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+const fn intersperse_fold<I, B, F, G>(
     mut iter: I,
     init: B,
     mut f: F,
@@ -217,9 +231,9 @@ fn intersperse_fold<I, B, F, G>(
     mut next_item: Option<I::Item>,
 ) -> B
 where
-    I: Iterator,
-    F: FnMut(B, I::Item) -> B,
-    G: FnMut() -> I::Item,
+    I: [const] Iterator,
+    F: [const] Destruct + [const] FnMut(B, I::Item) -> B,
+    G: [const] FnMut() -> I::Item,
 {
     let mut accum = init;
 

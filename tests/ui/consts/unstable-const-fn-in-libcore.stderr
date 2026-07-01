@@ -1,7 +1,7 @@
 error[E0493]: destructor of `F` cannot be evaluated at compile-time
   --> $DIR/unstable-const-fn-in-libcore.rs:19:61
    |
-LL |     const fn unwrap_or_else<F: [const] FnOnce() -> T>(self, f: F) -> T {
+LL |     const fn unwrap_or_else<F: [const] Destruct + [const] FnOnce() -> T>(self, f: F) -> T {
    |                                                             ^ the destructor for this type cannot be evaluated in constant functions
 ...
 LL |     }
@@ -10,7 +10,7 @@ LL |     }
 error[E0493]: destructor of `Opt<T>` cannot be evaluated at compile-time
   --> $DIR/unstable-const-fn-in-libcore.rs:19:55
    |
-LL |     const fn unwrap_or_else<F: [const] FnOnce() -> T>(self, f: F) -> T {
+LL |     const fn unwrap_or_else<F: [const] Destruct + [const] FnOnce() -> T>(self, f: F) -> T {
    |                                                       ^^^^ the destructor for this type cannot be evaluated in constant functions
 ...
 LL |     }

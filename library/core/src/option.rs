@@ -1060,7 +1060,7 @@ impl<T> Option<T> {
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
     pub const fn unwrap_or_else<F>(self, f: F) -> T
     where
-        F: [const] FnOnce() -> T + [const] Destruct,
+        F: [const] Destruct + [const] FnOnce() -> T,
     {
         match self {
             Some(x) => x,
@@ -1159,7 +1159,7 @@ impl<T> Option<T> {
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
     pub const fn map<U, F>(self, f: F) -> Option<U>
     where
-        F: [const] FnOnce(T) -> U + [const] Destruct,
+        F: [const] Destruct + [const] FnOnce(T) -> U,
     {
         match self {
             Some(x) => Some(f(x)),
@@ -1190,7 +1190,7 @@ impl<T> Option<T> {
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
     pub const fn inspect<F>(self, f: F) -> Self
     where
-        F: [const] FnOnce(&T) + [const] Destruct,
+        F: [const] Destruct + [const] FnOnce(&T),
     {
         if let Some(ref x) = self {
             f(x);
@@ -1223,7 +1223,7 @@ impl<T> Option<T> {
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
     pub const fn map_or<U, F>(self, default: U, f: F) -> U
     where
-        F: [const] FnOnce(T) -> U + [const] Destruct,
+        F: [const] Destruct + [const] FnOnce(T) -> U,
         U: [const] Destruct,
     {
         match self {
@@ -1271,7 +1271,7 @@ impl<T> Option<T> {
     pub const fn map_or_else<U, D, F>(self, default: D, f: F) -> U
     where
         D: [const] FnOnce() -> U + [const] Destruct,
-        F: [const] FnOnce(T) -> U + [const] Destruct,
+        F: [const] Destruct + [const] FnOnce(T) -> U,
     {
         match self {
             Some(t) => f(t),
@@ -1302,7 +1302,7 @@ impl<T> Option<T> {
     pub const fn map_or_default<U, F>(self, f: F) -> U
     where
         U: [const] Default,
-        F: [const] FnOnce(T) -> U + [const] Destruct,
+        F: [const] Destruct + [const] FnOnce(T) -> U,
     {
         match self {
             Some(t) => f(t),
@@ -1362,7 +1362,7 @@ impl<T> Option<T> {
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
     pub const fn ok_or_else<E, F>(self, err: F) -> Result<T, E>
     where
-        F: [const] FnOnce() -> E + [const] Destruct,
+        F: [const] Destruct + [const] FnOnce() -> E,
     {
         match self {
             Some(v) => Ok(v),
@@ -1540,7 +1540,7 @@ impl<T> Option<T> {
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
     pub const fn and_then<U, F>(self, f: F) -> Option<U>
     where
-        F: [const] FnOnce(T) -> Option<U> + [const] Destruct,
+        F: [const] Destruct + [const] FnOnce(T) -> Option<U>,
     {
         match self {
             Some(x) => f(x),
@@ -1646,7 +1646,7 @@ impl<T> Option<T> {
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
     pub const fn or_else<F>(self, f: F) -> Option<T>
     where
-        F: [const] FnOnce() -> Option<T> + [const] Destruct,
+        F: [const] Destruct + [const] FnOnce() -> Option<T>,
         //FIXME(const_hack): this `T: [const] Destruct` is unnecessary, but even precise live drops can't tell
         // no value of type `T` gets dropped here
         T: [const] Destruct,
@@ -1804,7 +1804,7 @@ impl<T> Option<T> {
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
     pub const fn get_or_insert_with<F>(&mut self, f: F) -> &mut T
     where
-        F: [const] FnOnce() -> T + [const] Destruct,
+        F: [const] Destruct + [const] FnOnce() -> T,
         T: [const] Destruct,
     {
         if let None = self {
@@ -1961,7 +1961,7 @@ impl<T> Option<T> {
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
     pub const fn zip_with<U, F, R>(self, other: Option<U>, f: F) -> Option<R>
     where
-        F: [const] FnOnce(T, U) -> R + [const] Destruct,
+        F: [const] Destruct + [const] FnOnce(T, U) -> R,
         T: [const] Destruct,
         U: [const] Destruct,
     {

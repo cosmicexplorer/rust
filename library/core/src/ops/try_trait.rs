@@ -404,7 +404,7 @@ pub(crate) struct Wrapped<T, A, F: FnMut(A) -> T> {
     p: PhantomData<(T, A)>,
 }
 #[rustc_const_unstable(feature = "const_never_short_circuit", issue = "none")]
-impl<T, A, F: [const] FnMut(A) -> T + [const] Destruct> const FnOnce<(A,)> for Wrapped<T, A, F> {
+impl<T, A, F: [const] Destruct + [const] FnMut(A) -> T + [const] Destruct> const FnOnce<(A,)> for Wrapped<T, A, F> {
     type Output = NeverShortCircuit<T>;
 
     extern "rust-call" fn call_once(mut self, args: (A,)) -> Self::Output {
@@ -412,7 +412,7 @@ impl<T, A, F: [const] FnMut(A) -> T + [const] Destruct> const FnOnce<(A,)> for W
     }
 }
 #[rustc_const_unstable(feature = "const_never_short_circuit", issue = "none")]
-impl<T, A, F: [const] FnMut(A) -> T> const FnMut<(A,)> for Wrapped<T, A, F> {
+impl<T, A, F: [const] Destruct + [const] FnMut(A) -> T> const FnMut<(A,)> for Wrapped<T, A, F> {
     extern "rust-call" fn call_mut(&mut self, (args,): (A,)) -> Self::Output {
         NeverShortCircuit((self.f)(args))
     }
@@ -426,7 +426,7 @@ impl<T> NeverShortCircuit<T> {
     #[inline]
     pub(crate) const fn wrap_mut_1<A, F>(f: F) -> Wrapped<T, A, F>
     where
-        F: [const] FnMut(A) -> T,
+        F: [const] Destruct + [const] FnMut(A) -> T,
     {
         Wrapped { f, p: PhantomData }
     }

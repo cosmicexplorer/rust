@@ -83,7 +83,8 @@
 /// assert_eq!(4, counter.len());
 /// ```
 #[stable(feature = "rust1", since = "1.0.0")]
-pub trait ExactSizeIterator: Iterator {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+pub const trait ExactSizeIterator: [const] Iterator {
     /// Returns the exact remaining length of the iterator.
     ///
     /// The implementation ensures that the iterator will return exactly `len()`
@@ -151,7 +152,8 @@ pub trait ExactSizeIterator: Iterator {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<I: ExactSizeIterator + ?Sized> ExactSizeIterator for &mut I {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I: [const] ExactSizeIterator + ?Sized> const ExactSizeIterator for &mut I {
     fn len(&self) -> usize {
         (**self).len()
     }

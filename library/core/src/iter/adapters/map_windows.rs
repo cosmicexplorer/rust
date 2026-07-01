@@ -1,4 +1,5 @@
 use crate::iter::FusedIterator;
+use crate::marker::Destruct;
 use crate::mem::MaybeUninit;
 use crate::{fmt, ptr};
 
@@ -46,7 +47,8 @@ struct Buffer<T, const N: usize> {
 }
 
 impl<I: Iterator, F, const N: usize> MapWindows<I, F, N> {
-    pub(in crate::iter) fn new(iter: I, f: F) -> Self {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub(in crate::iter) const fn new(iter: I, f: F) -> Self {
         assert!(N != 0, "array in `Iterator::map_windows` must contain more than 0 elements");
 
         // Only ZST arrays' length can be so large.
@@ -62,12 +64,17 @@ impl<I: Iterator, F, const N: usize> MapWindows<I, F, N> {
 }
 
 impl<I: Iterator, const N: usize> MapWindowsInner<I, N> {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
     #[inline]
-    fn new(iter: I) -> Self {
+    const fn new(iter: I) -> Self {
         Self { iter: Some(iter), buffer: None }
     }
 
-    fn next_window(&mut self) -> Option<&[I::Item; N]> {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    const fn next_window(&mut self) -> Option<&[I::Item; N]>
+    where
+        I: [const] Iterator,
+    {
         let iter = self.iter.as_mut()?;
         match self.buffer {
             // It is the first time to advance. We collect
@@ -88,7 +95,11 @@ impl<I: Iterator, const N: usize> MapWindowsInner<I, N> {
         self.buffer.as_ref().map(Buffer::as_array_ref)
     }
 
-    fn size_hint(&self) -> (usize, Option<usize>) {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    const fn size_hint(&self) -> (usize, Option<usize>)
+    where
+        I: [const] Iterator,
+    {
         let Some(ref iter) = self.iter else { return (0, Some(0)) };
         let (lo, hi) = iter.size_hint();
         if self.buffer.is_some() {
@@ -105,33 +116,38 @@ impl<I: Iterator, const N: usize> MapWindowsInner<I, N> {
 }
 
 impl<T, const N: usize> Buffer<T, N> {
-    fn try_from_iter(iter: &mut impl Iterator<Item = T>) -> Option<Self> {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    const fn try_from_iter(iter: &mut impl [const] Iterator<Item = T>) -> Option<Self> {
         let first_half = crate::array::iter_next_chunk(iter).ok()?;
         let buffer =
             [MaybeUninit::new(first_half).transpose(), [const { MaybeUninit::uninit() }; N]];
         Some(Self { buffer, start: 0 })
     }
 
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
     #[inline]
-    fn buffer_ptr(&self) -> *const MaybeUninit<T> {
+    const fn buffer_ptr(&self) -> *const MaybeUninit<T> {
         self.buffer.as_ptr().cast()
     }
 
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
     #[inline]
-    fn buffer_mut_ptr(&mut self) -> *mut MaybeUninit<T> {
+    const fn buffer_mut_ptr(&mut self) -> *mut MaybeUninit<T> {
         self.buffer.as_mut_ptr().cast()
     }
 
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
     #[inline]
-    fn as_array_ref(&self) -> &[T; N] {
+    const fn as_array_ref(&self) -> &[T; N] {
         debug_assert!(self.start + N <= 2 * N);
 
         // SAFETY: our invariant guarantees these elements are initialized.
         unsafe { &*self.buffer_ptr().add(self.start).cast() }
     }
 
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
     #[inline]
-    fn as_uninit_array_mut(&mut self) -> &mut MaybeUninit<[T; N]> {
+    const fn as_uninit_array_mut(&mut self) -> &mut MaybeUninit<[T; N]> {
         debug_assert!(self.start + N <= 2 * N);
 
         // SAFETY: our invariant guarantees these elements are in bounds.
@@ -142,7 +158,8 @@ impl<T, const N: usize> Buffer<T, N> {
     ///
     /// All the elements will be shifted to the front end when pushing reaches
     /// the back end.
-    fn push(&mut self, next: T) {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    const fn push(&mut self, next: T) {
         let buffer_mut_ptr = self.buffer_mut_ptr();
         debug_assert!(self.start + N <= 2 * N);
 
@@ -199,7 +216,8 @@ impl<T, const N: usize> Buffer<T, N> {
     }
 }
 
-impl<T: Clone, const N: usize> Clone for Buffer<T, N> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<T: [const] Clone, const N: usize> const Clone for Buffer<T, N> {
     fn clone(&self) -> Self {
         let mut buffer = Buffer {
             buffer: [[const { MaybeUninit::uninit() }; N], [const { MaybeUninit::uninit() }; N]],
@@ -210,17 +228,19 @@ impl<T: Clone, const N: usize> Clone for Buffer<T, N> {
     }
 }
 
-impl<I, const N: usize> Clone for MapWindowsInner<I, N>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I, const N: usize> const Clone for MapWindowsInner<I, N>
 where
-    I: Iterator + Clone,
-    I::Item: Clone,
+    I: [const] Iterator + [const] Clone,
+    I::Item: [const] Clone,
 {
     fn clone(&self) -> Self {
         Self { iter: self.iter.clone(), buffer: self.buffer.clone() }
     }
 }
 
-impl<T, const N: usize> Drop for Buffer<T, N> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<T: [const] Drop, const N: usize> const Drop for Buffer<T, N> {
     fn drop(&mut self) {
         // SAFETY: our invariant guarantees that N elements starting from
         // `self.start` are initialized. We drop them here.
@@ -235,10 +255,11 @@ impl<T, const N: usize> Drop for Buffer<T, N> {
 }
 
 #[unstable(feature = "iter_map_windows", reason = "recently added", issue = "87155")]
-impl<I, F, R, const N: usize> Iterator for MapWindows<I, F, N>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I, F, R, const N: usize> const Iterator for MapWindows<I, F, N>
 where
-    I: Iterator,
-    F: FnMut(&[I::Item; N]) -> R,
+    I: [const] Iterator,
+    F: [const] Destruct + [const] FnMut(&[I::Item; N]) -> R,
 {
     type Item = R;
 
@@ -256,18 +277,20 @@ where
 // Note that even if the inner iterator not fused, the `MapWindows` is still fused,
 // because we don't allow "holes" in the mapping window.
 #[unstable(feature = "iter_map_windows", reason = "recently added", issue = "87155")]
-impl<I, F, R, const N: usize> FusedIterator for MapWindows<I, F, N>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I, F, R, const N: usize> const FusedIterator for MapWindows<I, F, N>
 where
-    I: Iterator,
-    F: FnMut(&[I::Item; N]) -> R,
+    I: [const] Iterator,
+    F: [const] Destruct + [const] FnMut(&[I::Item; N]) -> R,
 {
 }
 
 #[unstable(feature = "iter_map_windows", reason = "recently added", issue = "87155")]
-impl<I, F, R, const N: usize> ExactSizeIterator for MapWindows<I, F, N>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I, F, R, const N: usize> const ExactSizeIterator for MapWindows<I, F, N>
 where
-    I: ExactSizeIterator,
-    F: FnMut(&[I::Item; N]) -> R,
+    I: [const] ExactSizeIterator,
+    F: [const] Destruct + [const] FnMut(&[I::Item; N]) -> R,
 {
 }
 
@@ -279,11 +302,12 @@ impl<I: Iterator + fmt::Debug, F, const N: usize> fmt::Debug for MapWindows<I, F
 }
 
 #[unstable(feature = "iter_map_windows", reason = "recently added", issue = "87155")]
-impl<I, F, const N: usize> Clone for MapWindows<I, F, N>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I, F, const N: usize> const Clone for MapWindows<I, F, N>
 where
-    I: Iterator + Clone,
-    F: Clone,
-    I::Item: Clone,
+    I: [const] Iterator + [const] Clone,
+    F: [const] Destruct + [const] Clone,
+    I::Item: [const] Clone,
 {
     fn clone(&self) -> Self {
         Self { f: self.f.clone(), inner: self.inner.clone() }

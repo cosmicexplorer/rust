@@ -1,4 +1,5 @@
 use crate::iter::FusedIterator;
+use crate::marker::Destruct;
 use crate::num::NonZero;
 use crate::ops::Try;
 
@@ -18,15 +19,17 @@ pub struct Cycle<I> {
 }
 
 impl<I: Clone> Cycle<I> {
-    pub(in crate::iter) fn new(iter: I) -> Cycle<I> {
+    #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+    pub(in crate::iter) const fn new(iter: I) -> Cycle<I> {
         Cycle { orig: iter.clone(), iter }
     }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<I> Iterator for Cycle<I>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I> const Iterator for Cycle<I>
 where
-    I: Clone + Iterator,
+    I: [const] Clone + [const] Iterator,
 {
     type Item = <I as Iterator>::Item;
 
@@ -54,8 +57,8 @@ where
     #[inline]
     fn try_fold<Acc, F, R>(&mut self, mut acc: Acc, mut f: F) -> R
     where
-        F: FnMut(Acc, Self::Item) -> R,
-        R: Try<Output = Acc>,
+        F: [const] Destruct + [const] FnMut(Acc, Self::Item) -> R,
+        R: [const] Try<Output = Acc>,
     {
         // fully iterate the current iterator. this is necessary because
         // `self.iter` may be empty even when `self.orig` isn't
@@ -106,4 +109,5 @@ where
 }
 
 #[stable(feature = "fused", since = "1.26.0")]
-impl<I> FusedIterator for Cycle<I> where I: Clone + Iterator {}
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I> const FusedIterator for Cycle<I> where I: [const] Clone + [const] Iterator {}

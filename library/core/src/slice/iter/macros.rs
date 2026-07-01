@@ -150,7 +150,8 @@ macro_rules! iterator {
         }
 
         #[stable(feature = "rust1", since = "1.0.0")]
-        impl<'a, T> Iterator for $name<'a, T> {
+        #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+        impl<'a, T> const Iterator for $name<'a, T> {
             type Item = $elem;
 
             #[inline]

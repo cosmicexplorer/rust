@@ -60,7 +60,7 @@ impl<'a, T, F, A: Allocator> ExtractIf<'a, T, F, A> {
 #[stable(feature = "extract_if", since = "1.87.0")]
 impl<T, F, A: Allocator> Iterator for ExtractIf<'_, T, F, A>
 where
-    F: FnMut(&mut T) -> bool,
+    F: [const] Destruct + [const] FnMut(&mut T) -> bool,
 {
     type Item = T;
 

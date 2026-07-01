@@ -1,3 +1,4 @@
+use crate::marker::Destruct;
 use crate::num::NonZero;
 use crate::ops::{ControlFlow, Try};
 
@@ -38,7 +39,8 @@ use crate::ops::{ControlFlow, Try};
 /// ```
 #[stable(feature = "rust1", since = "1.0.0")]
 #[rustc_diagnostic_item = "DoubleEndedIterator"]
-pub trait DoubleEndedIterator: Iterator {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+pub const trait DoubleEndedIterator: [const] Iterator {
     /// Removes and returns an element from the end of the iterator.
     ///
     /// Returns `None` when there are no more elements.
@@ -230,8 +232,8 @@ pub trait DoubleEndedIterator: Iterator {
     fn try_rfold<B, F, R>(&mut self, init: B, mut f: F) -> R
     where
         Self: Sized,
-        F: FnMut(B, Self::Item) -> R,
-        R: Try<Output = B>,
+        F: [const] Destruct + [const] FnMut(B, Self::Item) -> R,
+        R: [const] Try<Output = B>,
     {
         let mut accum = init;
         while let Some(x) = self.next_back() {
@@ -301,7 +303,7 @@ pub trait DoubleEndedIterator: Iterator {
     fn rfold<B, F>(mut self, init: B, mut f: F) -> B
     where
         Self: Sized,
-        F: FnMut(B, Self::Item) -> B,
+        F: [const] Destruct + [const] FnMut(B, Self::Item) -> B,
     {
         let mut accum = init;
         while let Some(x) = self.next_back() {
@@ -366,10 +368,12 @@ pub trait DoubleEndedIterator: Iterator {
     fn rfind<P>(&mut self, predicate: P) -> Option<Self::Item>
     where
         Self: Sized,
-        P: FnMut(&Self::Item) -> bool,
+        P: [const] FnMut(&Self::Item) -> bool,
     {
         #[inline]
-        fn check<T>(mut predicate: impl FnMut(&T) -> bool) -> impl FnMut((), T) -> ControlFlow<T> {
+        const fn check<T>(
+            mut predicate: impl [const] FnMut(&T) -> bool,
+        ) -> impl [const] FnMut((), T) -> ControlFlow<T> {
             move |(), x| {
                 if predicate(&x) { ControlFlow::Break(x) } else { ControlFlow::Continue(()) }
             }
@@ -380,7 +384,8 @@ pub trait DoubleEndedIterator: Iterator {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<'a, I: DoubleEndedIterator + ?Sized> DoubleEndedIterator for &'a mut I {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<'a, I: [const] DoubleEndedIterator + ?Sized> const DoubleEndedIterator for &'a mut I {
     fn next_back(&mut self) -> Option<I::Item> {
         (**self).next_back()
     }
@@ -392,35 +397,37 @@ impl<'a, I: DoubleEndedIterator + ?Sized> DoubleEndedIterator for &'a mut I {
     }
     fn rfold<B, F>(self, init: B, f: F) -> B
     where
-        F: FnMut(B, Self::Item) -> B,
+        F: [const] Destruct + [const] FnMut(B, Self::Item) -> B,
     {
         self.spec_rfold(init, f)
     }
     fn try_rfold<B, F, R>(&mut self, init: B, f: F) -> R
     where
-        F: FnMut(B, Self::Item) -> R,
-        R: Try<Output = B>,
+        F: [const] Destruct + [const] FnMut(B, Self::Item) -> R,
+        R: [const] Try<Output = B>,
     {
         self.spec_try_rfold(init, f)
     }
 }
 
 /// Helper trait to specialize `rfold` and `rtry_fold` for `&mut I where I: Sized`
-trait DoubleEndedIteratorRefSpec: DoubleEndedIterator {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+const trait DoubleEndedIteratorRefSpec: [const] DoubleEndedIterator {
     fn spec_rfold<B, F>(self, init: B, f: F) -> B
     where
-        F: FnMut(B, Self::Item) -> B;
+        F: [const] Destruct + [const] FnMut(B, Self::Item) -> B;
 
     fn spec_try_rfold<B, F, R>(&mut self, init: B, f: F) -> R
     where
-        F: FnMut(B, Self::Item) -> R,
-        R: Try<Output = B>;
+        F: [const] Destruct + [const] FnMut(B, Self::Item) -> R,
+        R: [const] Try<Output = B>;
 }
 
-impl<I: DoubleEndedIterator + ?Sized> DoubleEndedIteratorRefSpec for &mut I {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I: [const] DoubleEndedIterator + ?Sized> const DoubleEndedIteratorRefSpec for &mut I {
     default fn spec_rfold<B, F>(self, init: B, mut f: F) -> B
     where
-        F: FnMut(B, Self::Item) -> B,
+        F: [const] Destruct + [const] FnMut(B, Self::Item) -> B,
     {
         let mut accum = init;
         while let Some(x) = self.next_back() {
@@ -431,8 +438,8 @@ impl<I: DoubleEndedIterator + ?Sized> DoubleEndedIteratorRefSpec for &mut I {
 
     default fn spec_try_rfold<B, F, R>(&mut self, init: B, mut f: F) -> R
     where
-        F: FnMut(B, Self::Item) -> R,
-        R: Try<Output = B>,
+        F: [const] Destruct + [const] FnMut(B, Self::Item) -> R,
+        R: [const] Try<Output = B>,
     {
         let mut accum = init;
         while let Some(x) = self.next_back() {
@@ -442,13 +449,14 @@ impl<I: DoubleEndedIterator + ?Sized> DoubleEndedIteratorRefSpec for &mut I {
     }
 }
 
-impl<I: DoubleEndedIterator> DoubleEndedIteratorRefSpec for &mut I {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I: [const] DoubleEndedIterator> const DoubleEndedIteratorRefSpec for &mut I {
     impl_fold_via_try_fold! { spec_rfold -> spec_try_rfold }
 
     fn spec_try_rfold<B, F, R>(&mut self, init: B, f: F) -> R
     where
-        F: FnMut(B, Self::Item) -> R,
-        R: Try<Output = B>,
+        F: [const] Destruct + [const] FnMut(B, Self::Item) -> R,
+        R: [const] Try<Output = B>,
     {
         (**self).try_rfold(init, f)
     }

@@ -1,5 +1,6 @@
 use crate::iter::adapters::SourceIter;
 use crate::iter::{FusedIterator, InPlaceIterable, TrustedFused};
+use crate::marker::Destruct;
 use crate::mem::{ManuallyDrop, MaybeUninit};
 use crate::num::NonZero;
 use crate::ops::{ControlFlow, Try};
@@ -20,7 +21,7 @@ pub struct FilterMap<I, F> {
     f: F,
 }
 impl<I, F> FilterMap<I, F> {
-    pub(in crate::iter) fn new(iter: I, f: F) -> FilterMap<I, F> {
+    pub(in crate::iter) const fn new(iter: I, f: F) -> FilterMap<I, F> {
         FilterMap { iter, f }
     }
 }
@@ -32,20 +33,22 @@ impl<I: fmt::Debug, F> fmt::Debug for FilterMap<I, F> {
     }
 }
 
-fn filter_map_fold<T, B, Acc>(
-    mut f: impl FnMut(T) -> Option<B>,
-    mut fold: impl FnMut(Acc, B) -> Acc,
-) -> impl FnMut(Acc, T) -> Acc {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+const fn filter_map_fold<T, B, Acc>(
+    mut f: impl [const] FnMut(T) -> Option<B>,
+    mut fold: impl [const] FnMut(Acc, B) -> Acc,
+) -> impl [const] FnMut(Acc, T) -> Acc {
     move |acc, item| match f(item) {
         Some(x) => fold(acc, x),
         None => acc,
     }
 }
 
-fn filter_map_try_fold<'a, T, B, Acc, R: Try<Output = Acc>>(
-    f: &'a mut impl FnMut(T) -> Option<B>,
-    mut fold: impl FnMut(Acc, B) -> R + 'a,
-) -> impl FnMut(Acc, T) -> R + 'a {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+const fn filter_map_try_fold<'a, T, B, Acc, R: [const] Try<Output = Acc>>(
+    f: &'a mut impl [const] FnMut(T) -> Option<B>,
+    mut fold: impl [const] FnMut(Acc, B) -> R + 'a,
+) -> impl [const] FnMut(Acc, T) -> R + 'a {
     move |acc, item| match f(item) {
         Some(x) => fold(acc, x),
         None => try { acc },
@@ -53,9 +56,10 @@ fn filter_map_try_fold<'a, T, B, Acc, R: Try<Output = Acc>>(
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<B, I: Iterator, F> Iterator for FilterMap<I, F>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<B, I: [const] Iterator, F> const Iterator for FilterMap<I, F>
 where
-    F: FnMut(I::Item) -> Option<B>,
+    F: [const] Destruct + [const] FnMut(I::Item) -> Option<B>,
 {
     type Item = B;
 
@@ -75,7 +79,8 @@ where
             initialized: usize,
         }
 
-        impl<T> Drop for Guard<'_, T> {
+        #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+        impl<T: [const] Drop> const Drop for Guard<'_, T> {
             #[inline]
             fn drop(&mut self) {
                 if const { crate::mem::needs_drop::<T>() } {
@@ -132,8 +137,8 @@ where
     fn try_fold<Acc, Fold, R>(&mut self, init: Acc, fold: Fold) -> R
     where
         Self: Sized,
-        Fold: FnMut(Acc, Self::Item) -> R,
-        R: Try<Output = Acc>,
+        Fold: [const] FnMut(Acc, Self::Item) -> R,
+        R: [const] Try<Output = Acc>,
     {
         self.iter.try_fold(init, filter_map_try_fold(&mut self.f, fold))
     }
@@ -141,16 +146,17 @@ where
     #[inline]
     fn fold<Acc, Fold>(self, init: Acc, fold: Fold) -> Acc
     where
-        Fold: FnMut(Acc, Self::Item) -> Acc,
+        Fold: [const] FnMut(Acc, Self::Item) -> Acc,
     {
         self.iter.fold(init, filter_map_fold(self.f, fold))
     }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<B, I: DoubleEndedIterator, F> DoubleEndedIterator for FilterMap<I, F>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<B, I: [const] DoubleEndedIterator, F> const DoubleEndedIterator for FilterMap<I, F>
 where
-    F: FnMut(I::Item) -> Option<B>,
+    F: [const] Destruct + [const] FnMut(I::Item) -> Option<B>,
 {
     #[inline]
     fn next_back(&mut self) -> Option<B> {
@@ -171,8 +177,8 @@ where
     fn try_rfold<Acc, Fold, R>(&mut self, init: Acc, fold: Fold) -> R
     where
         Self: Sized,
-        Fold: FnMut(Acc, Self::Item) -> R,
-        R: Try<Output = Acc>,
+        Fold: [const] FnMut(Acc, Self::Item) -> R,
+        R: [const] Try<Output = Acc>,
     {
         self.iter.try_rfold(init, filter_map_try_fold(&mut self.f, fold))
     }
@@ -180,22 +186,28 @@ where
     #[inline]
     fn rfold<Acc, Fold>(self, init: Acc, fold: Fold) -> Acc
     where
-        Fold: FnMut(Acc, Self::Item) -> Acc,
+        Fold: [const] FnMut(Acc, Self::Item) -> Acc,
     {
         self.iter.rfold(init, filter_map_fold(self.f, fold))
     }
 }
 
 #[stable(feature = "fused", since = "1.26.0")]
-impl<B, I: FusedIterator, F> FusedIterator for FilterMap<I, F> where F: FnMut(I::Item) -> Option<B> {}
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<B, I: [const] FusedIterator, F> const FusedIterator for FilterMap<I, F> where
+    F: [const] Destruct + [const] FnMut(I::Item) -> Option<B>
+{
+}
 
 #[unstable(issue = "none", feature = "trusted_fused")]
-unsafe impl<I: TrustedFused, F> TrustedFused for FilterMap<I, F> {}
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I: [const] TrustedFused, F> const TrustedFused for FilterMap<I, F> {}
 
 #[unstable(issue = "none", feature = "inplace_iteration")]
-unsafe impl<I, F> SourceIter for FilterMap<I, F>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I, F> const SourceIter for FilterMap<I, F>
 where
-    I: SourceIter,
+    I: [const] SourceIter,
 {
     type Source = I::Source;
 
@@ -207,7 +219,8 @@ where
 }
 
 #[unstable(issue = "none", feature = "inplace_iteration")]
-unsafe impl<I: InPlaceIterable, F> InPlaceIterable for FilterMap<I, F> {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I: [const] InPlaceIterable, F> const InPlaceIterable for FilterMap<I, F> {
     const EXPAND_BY: Option<NonZero<usize>> = I::EXPAND_BY;
     const MERGE_BY: Option<NonZero<usize>> = I::MERGE_BY;
 }

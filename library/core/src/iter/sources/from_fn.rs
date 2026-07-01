@@ -1,7 +1,8 @@
 use crate::fmt;
+use crate::marker::Destruct;
 
 /// Creates an iterator with the provided closure
-/// `F: FnMut() -> Option<T>` as its [`next`](Iterator::next) method.
+/// `F: [const] Destruct + [const] FnMut() -> Option<T>` as its [`next`](Iterator::next) method.
 ///
 /// The iterator will yield the `T`s returned from the closure.
 ///
@@ -42,14 +43,15 @@ use crate::fmt;
 /// ```
 #[inline]
 #[stable(feature = "iter_from_fn", since = "1.34.0")]
-pub fn from_fn<T, F>(f: F) -> FromFn<F>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+pub const fn from_fn<T, F>(f: F) -> FromFn<F>
 where
     F: FnMut() -> Option<T>,
 {
     FromFn(f)
 }
 
-/// An iterator where each iteration calls the provided closure `F: FnMut() -> Option<T>`.
+/// An iterator where each iteration calls the provided closure `F: [const] Destruct + [const] FnMut() -> Option<T>`.
 ///
 /// This `struct` is created by the [`iter::from_fn()`] function.
 /// See its documentation for more.
@@ -60,9 +62,11 @@ where
 pub struct FromFn<F>(F);
 
 #[stable(feature = "iter_from_fn", since = "1.34.0")]
-impl<T, F> Iterator for FromFn<F>
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<T, F> const Iterator for FromFn<F>
 where
-    F: FnMut() -> Option<T>,
+    T: [const] Destruct,
+    F: [const] Destruct + [const] FnMut() -> Option<T>,
 {
     type Item = T;
 

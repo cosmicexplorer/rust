@@ -53,7 +53,7 @@ pub(super) struct Drain<'l, 'f, T, const N: usize, F> {
 #[unstable(feature = "array_try_map", issue = "79711")]
 impl<T, U, const N: usize, F> const FnOnce<(usize,)> for &mut Drain<'_, '_, T, N, F>
 where
-    F: [const] FnMut(T) -> U,
+    F: [const] Destruct + [const] FnMut(T) -> U,
 {
     type Output = U;
 
@@ -66,7 +66,7 @@ where
 #[unstable(feature = "array_try_map", issue = "79711")]
 impl<T, U, const N: usize, F> const FnMut<(usize,)> for &mut Drain<'_, '_, T, N, F>
 where
-    F: [const] FnMut(T) -> U,
+    F: [const] Destruct + [const] FnMut(T) -> U,
 {
     // FIXME(const-hack): ideally this would be an unsafe fn `next()`, and to use it you would instead `|_| unsafe { drain.next() }`.
     extern "rust-call" fn call_mut(

@@ -10,7 +10,8 @@ use crate::num::NonZero;
 #[unstable(issue = "none", feature = "trusted_fused")]
 #[doc(hidden)]
 #[rustc_specialization_trait]
-pub unsafe trait TrustedFused {}
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+pub const unsafe trait TrustedFused {}
 
 /// An iterator that always continues to yield `None` when exhausted.
 ///
@@ -29,10 +30,12 @@ pub unsafe trait TrustedFused {}
 // FIXME: this should be a #[marker] and have another blanket impl for T: TrustedFused
 // but that ICEs iter::Fuse specializations.
 #[lang = "fused_iterator"]
-pub trait FusedIterator: Iterator {}
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+pub const trait FusedIterator: [const] Iterator {}
 
 #[stable(feature = "fused", since = "1.26.0")]
-impl<I: FusedIterator + ?Sized> FusedIterator for &mut I {}
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+impl<I: [const] FusedIterator + ?Sized> const FusedIterator for &mut I {}
 
 /// An iterator that reports an accurate length using size_hint.
 ///
@@ -63,10 +66,12 @@ impl<I: FusedIterator + ?Sized> FusedIterator for &mut I {}
 /// of this trait must inspect [`Iterator::size_hint()`]’s upper bound.
 #[unstable(feature = "trusted_len", issue = "37572")]
 #[rustc_unsafe_specialization_marker]
-pub unsafe trait TrustedLen: Iterator {}
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+pub const unsafe trait TrustedLen: [const] Iterator {}
 
 #[unstable(feature = "trusted_len", issue = "37572")]
-unsafe impl<I: TrustedLen + ?Sized> TrustedLen for &mut I {}
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+unsafe impl<I: [const] TrustedLen + ?Sized> const TrustedLen for &mut I {}
 
 /// An iterator that when yielding an item will have taken at least one element
 /// from its underlying [`SourceIter`].
@@ -87,7 +92,8 @@ unsafe impl<I: TrustedLen + ?Sized> TrustedLen for &mut I {}
 #[unstable(issue = "none", feature = "inplace_iteration")]
 #[doc(hidden)]
 #[rustc_specialization_trait]
-pub unsafe trait InPlaceIterable {
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+pub const unsafe trait InPlaceIterable {
     /// The product of one-to-many item expansions that happen throughout the iterator pipeline.
     /// E.g. [[u8; 4]; 4].iter().flatten().flatten() would have a `EXPAND_BY` of 16.
     /// This is an upper bound, i.e. the transformations will produce at most this many items per
@@ -113,4 +119,5 @@ pub unsafe trait InPlaceIterable {
 /// for details. Consumers are free to rely on the invariants in unsafe code.
 #[unstable(feature = "trusted_step", issue = "85731")]
 #[rustc_specialization_trait]
-pub unsafe trait TrustedStep: Step + Copy {}
+#[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
+pub const unsafe trait TrustedStep: [const] Step + Copy {}

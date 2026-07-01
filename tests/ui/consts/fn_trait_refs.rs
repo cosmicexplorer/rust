@@ -34,11 +34,11 @@ where
     T: [const] Fn<()> + [const] Destruct,
 {
     (
-        // impl<A: Tuple, F: [const] Fn + ?Sized> const Fn<A> for &F
+        // impl<A: Tuple, F: [const] Destruct + [const] Fn + ?Sized> const Fn<A> for &F
         tester_fn(&f),
-        // impl<A: Tuple, F: [const] Fn + ?Sized> const FnMut<A> for &F
+        // impl<A: Tuple, F: [const] Destruct + [const] Fn + ?Sized> const FnMut<A> for &F
         tester_fn_mut(&f),
-        // impl<A: Tuple, F: [const] Fn + ?Sized> const FnOnce<A> for &F
+        // impl<A: Tuple, F: [const] Destruct + [const] Fn + ?Sized> const FnOnce<A> for &F
         tester_fn_once(&f),
     )
 }
@@ -48,9 +48,9 @@ where
     T: [const] FnMut<()> + [const] Destruct,
 {
     (
-        // impl<A: Tuple, F: [const] FnMut + ?Sized> const FnMut<A> for &mut F
+        // impl<A: Tuple, F: [const] Destruct + [const] FnMut + ?Sized> const FnMut<A> for &mut F
         tester_fn_mut(&mut f),
-        // impl<A: Tuple, F: [const] FnMut + ?Sized> const FnOnce<A> for &mut F
+        // impl<A: Tuple, F: [const] Destruct + [const] FnMut + ?Sized> const FnOnce<A> for &mut F
         tester_fn_once(&mut f),
     )
 }
